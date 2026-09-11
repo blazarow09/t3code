@@ -17,9 +17,25 @@ import {
   collectLimitNotices,
   collectLimitPools,
   elapsedShare,
+  formatResetsIn,
+  leftoverUsageForInstance,
+  leftoverUsageLabel,
+  leftoverRemainingText,
+  leftoverWindowsForModel,
+  formatRemainingAmount,
+  DEEPSEEK_BALANCE_WINDOW_ID,
+  DEEPSEEK_USAGE_SCOPE,
+  limitsNotice,
   paceOf,
   paceRemainingPercent,
+  cursorUsageBucketForModel,
+  CURSOR_MODELS_WINDOW_ID,
+  OTHER_MODELS_WINDOW_ID,
+  primaryUsageWindow,
+  providersWithLimits,
+  remainingPercent,
   usesChatGptSharing,
+  usableLimitWindows,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -57,6 +73,289 @@ describe("pace", () => {
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
+  });
+
+  it("has no pace without a reset or a duration", () => {
+    expect(paceOf({ ...window, resetsAt: undefined }, now)).toBeNull();
+    expect(paceOf({ ...window, windowDurationMins: undefined }, now)).toBeNull();
+    expect(paceRemainingPercent({ ...window, resetsAt: undefined }, now)).toBeNull();
+    expect(paceRemainingPercent({ ...window, windowDurationMins: undefined }, now)).toBeNull();
+    expect(formatResetsIn({ ...window, resetsAt: undefined }, now)).toBeNull();
+  });
+
+  it("keeps pace marks within the bar before a window starts and after it expires", () => {
+    expect(paceRemainingPercent(window, Date.parse("2026-09-03T08:00:00.000Z"))).toBe(100);
+    expect(paceRemainingPercent(window, Date.parse("2026-09-03T15:00:00.000Z"))).toBe(0);
+  });
+
+  it("phrases the reset as a countdown", () => {
+    expect(formatResetsIn(window, now)).toBe("resets in 2h 0m");
+    expect(formatResetsIn({ ...window, resetsAt: "2026-09-06T15:30:00.000Z" }, now)).toBe(
+      "resets in 3d 3h",
+    );
+    expect(formatResetsIn({ ...window, resetsAt: "2026-09-03T11:00:00.000Z" }, now)).toBe(
+      "resets now",
+    );
+  });
+});
+
+describe("primaryUsageWindow", () => {
+  const weekly = {
+    id: "seven_day",
+    kind: "weekly" as const,
+    label: "Weekly",
+    usedPercent: 20,
+  };
+  const monthly = {
+    id: "month",
+    kind: "monthly" as const,
+    label: "Monthly",
+    usedPercent: 10,
+  };
+
+  it("prefers the session window over longer buckets", () => {
+    expect(primaryUsageWindow([weekly, window, monthly])?.id).toBe("five_hour");
+  });
+
+  it("falls back to the earliest kind when there is no session", () => {
+    expect(primaryUsageWindow([monthly, weekly])?.id).toBe("seven_day");
+  });
+
+  it("is null when nothing was reported", () => {
+    expect(primaryUsageWindow([])).toBeNull();
+  });
+
+  it("prefers a model-scoped weekly when the selected model names that row", () => {
+    const fable = {
+      id: "seven_day_fable",
+      kind: "weekly" as const,
+      label: "Weekly · Fable",
+      usedPercent: 40,
+    };
+    expect(primaryUsageWindow([window, weekly, fable], "Fable")?.id).toBe("seven_day_fable");
+    expect(primaryUsageWindow([window, weekly, fable], "fable-5")?.id).toBe("seven_day_fable");
+    expect(primaryUsageWindow([window, weekly, fable])?.id).toBe("five_hour");
+  });
+
+  it("prefers Cursor Models or Other models from the selected slug", () => {
+    const cursorModels = {
+      id: CURSOR_MODELS_WINDOW_ID,
+      kind: "monthly" as const,
+      label: "Cursor Models",
+      usedPercent: 25,
+    };
+    const otherModels = {
+      id: OTHER_MODELS_WINDOW_ID,
+      kind: "monthly" as const,
+      label: "Other models",
+      usedPercent: 80,
+    };
+    expect(primaryUsageWindow([cursorModels, otherModels], "composer-2")?.id).toBe(
+      CURSOR_MODELS_WINDOW_ID,
+    );
+    expect(primaryUsageWindow([cursorModels, otherModels], "claude-opus-4-6")?.id).toBe(
+      OTHER_MODELS_WINDOW_ID,
+    );
+    expect(primaryUsageWindow([cursorModels, otherModels])?.id).toBe(CURSOR_MODELS_WINDOW_ID);
+  });
+
+  it("phrases leftover for the composer circle", () => {
+    expect(leftoverUsageLabel(window, now)).toBe("60% of Session left. resets in 2h 0m");
+  });
+
+  it("phrases prepaid leftover as an amount, not a percent", () => {
+    const deepseek = {
+      id: DEEPSEEK_BALANCE_WINDOW_ID,
+      kind: "other" as const,
+      label: "Top-up · DeepSeek",
+      usedPercent: 0,
+      remainingAmount: "110.00",
+      remainingCurrency: "CNY",
+      scope: DEEPSEEK_USAGE_SCOPE,
+    };
+    expect(formatRemainingAmount(deepseek)).toBe("¥110.00");
+    expect(leftoverRemainingText(deepseek)).toBe("¥110.00 left");
+    expect(leftoverUsageLabel(deepseek, now)).toBe("¥110.00 of Top-up · DeepSeek left");
+    expect(formatRemainingAmount({ ...deepseek, remainingCurrency: "USD" })).toBe("$110.00");
+  });
+});
+
+describe("leftoverWindowsForModel", () => {
+  const deepseek = {
+    id: DEEPSEEK_BALANCE_WINDOW_ID,
+    kind: "other" as const,
+    label: "Top-up · DeepSeek",
+    usedPercent: 0,
+    remainingAmount: "12.50",
+    remainingCurrency: "USD",
+    scope: DEEPSEEK_USAGE_SCOPE,
+  };
+
+  it("keeps a DeepSeek top-up only when the selected model is DeepSeek", () => {
+    expect(leftoverWindowsForModel([window, deepseek], "deepseek/deepseek-chat")).toEqual([
+      window,
+      deepseek,
+    ]);
+    expect(leftoverWindowsForModel([window, deepseek], "anthropic/claude-sonnet-4")).toEqual([
+      window,
+    ]);
+    expect(leftoverWindowsForModel([deepseek], "anthropic/claude-sonnet-4")).toEqual([]);
+    expect(leftoverWindowsForModel([deepseek])).toEqual([deepseek]);
+  });
+});
+
+describe("cursorUsageBucketForModel", () => {
+  it("classifies Cursor-owned slugs versus Claude/GPT via Cursor", () => {
+    expect(cursorUsageBucketForModel("composer-2")).toBe(CURSOR_MODELS_WINDOW_ID);
+    expect(cursorUsageBucketForModel("auto")).toBe(CURSOR_MODELS_WINDOW_ID);
+    expect(cursorUsageBucketForModel("Cursor Grok 4.5 High")).toBe(CURSOR_MODELS_WINDOW_ID);
+    expect(cursorUsageBucketForModel("claude-sonnet-4-6")).toBe(OTHER_MODELS_WINDOW_ID);
+    expect(cursorUsageBucketForModel("gpt-5.4")).toBe(OTHER_MODELS_WINDOW_ID);
+    expect(cursorUsageBucketForModel("mystery-model")).toBeNull();
+    expect(cursorUsageBucketForModel(null)).toBeNull();
+  });
+});
+
+describe("usableLimitWindows", () => {
+  it("drops unavailable and empty snapshots", () => {
+    expect(usableLimitWindows(undefined)).toEqual([]);
+    expect(usableLimitWindows({ checkedAt: "2026-09-03T11:00:00.000Z", windows: [] })).toEqual([]);
+    expect(
+      usableLimitWindows({
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [window],
+        unavailable: { reason: "unsupported" },
+      }),
+    ).toEqual([]);
+    expect(
+      usableLimitWindows({ checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] }),
+    ).toEqual([window]);
+  });
+});
+
+describe("leftoverUsageForInstance", () => {
+  it("prefers the selected instance when several accounts report windows", () => {
+    const report = collectProviderUsageLimits(
+      ProviderInstanceId.make("codex"),
+      [
+        provider({
+          instanceId: ProviderInstanceId.make("codex"),
+          usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] },
+          auth: { status: "authenticated", label: "ChatGPT Plus" },
+        }),
+        provider({
+          instanceId: ProviderInstanceId.make("codex-work"),
+          usageLimits: {
+            checkedAt: "2026-09-03T11:00:00.000Z",
+            windows: [{ ...window, usedPercent: 90 }],
+          },
+        }),
+      ],
+      [],
+      now,
+    );
+    expect(leftoverUsageForInstance(report, ProviderInstanceId.make("codex"))).toEqual({
+      driver: ProviderDriverKind.make("codex"),
+      plan: "ChatGPT Plus",
+      windows: [window],
+    });
+  });
+
+  it("is null when the report has no leftover windows", () => {
+    expect(leftoverUsageForInstance(null, ProviderInstanceId.make("codex"))).toBeNull();
+    expect(
+      leftoverUsageForInstance(
+        { createdAt: "2026-09-03T12:00:00.000Z", accounts: [], notices: [] },
+        ProviderInstanceId.make("codex"),
+      ),
+    ).toBeNull();
+  });
+
+  it("hides a scoped DeepSeek window when OpenCode is on another model", () => {
+    const deepseek = {
+      id: DEEPSEEK_BALANCE_WINDOW_ID,
+      kind: "other" as const,
+      label: "Top-up · DeepSeek",
+      usedPercent: 0,
+      remainingAmount: "12.50",
+      remainingCurrency: "USD",
+      scope: DEEPSEEK_USAGE_SCOPE,
+    };
+    const report = collectProviderUsageLimits(
+      ProviderInstanceId.make("opencode"),
+      [
+        provider({
+          instanceId: ProviderInstanceId.make("opencode"),
+          driver: ProviderDriverKind.make("opencode"),
+          usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [deepseek] },
+        }),
+      ],
+      [],
+      now,
+    );
+    expect(
+      leftoverUsageForInstance(
+        report,
+        ProviderInstanceId.make("opencode"),
+        "deepseek/deepseek-chat",
+      )?.windows,
+    ).toEqual([deepseek]);
+    expect(
+      leftoverUsageForInstance(
+        report,
+        ProviderInstanceId.make("opencode"),
+        "anthropic/claude-sonnet-4",
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("limitsNotice", () => {
+  it("explains empty bars and passes provider messages through", () => {
+    const checkedAt = "2026-09-03T11:00:00.000Z";
+    expect(limitsNotice({ checkedAt, windows: [window] })).toBeNull();
+    expect(limitsNotice({ checkedAt, windows: [] })).toBe("No limits reported.");
+    expect(limitsNotice({ checkedAt, windows: [], unavailable: { reason: "unsupported" } })).toBe(
+      "This account has no subscription limits.",
+    );
+    expect(
+      limitsNotice({
+        checkedAt,
+        windows: [],
+        unavailable: { reason: "probeFailed", message: "Codex timed out." },
+      }),
+    ).toBe("Codex timed out.");
+  });
+});
+
+describe("providersWithLimits", () => {
+  it("keeps only usable providers whose driver reports limits at all", () => {
+    const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
+    const codex = provider({ usageLimits: limits });
+    expect(
+      providersWithLimits([
+        codex,
+        provider({
+          instanceId: ProviderInstanceId.make("cursor"),
+          driver: ProviderDriverKind.make("cursor"),
+        }),
+        provider({
+          instanceId: ProviderInstanceId.make("off"),
+          enabled: false,
+          usageLimits: limits,
+        }),
+        provider({
+          instanceId: ProviderInstanceId.make("gone"),
+          installed: false,
+          usageLimits: limits,
+        }),
+        provider({
+          instanceId: ProviderInstanceId.make("shadow"),
+          availability: "unavailable",
+          usageLimits: limits,
+        }),
+      ]),
+    ).toEqual([codex]);
   });
 });
 

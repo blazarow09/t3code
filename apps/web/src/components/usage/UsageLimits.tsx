@@ -15,6 +15,7 @@ import {
   type LimitPace,
   paceOf,
   paceRemainingPercent,
+  leftoverRemainingText,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
@@ -125,12 +126,13 @@ function WindowBar({
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const [barRef, paceMark] = usePaceMark(timeLeft);
+  const remainingLabel = leftoverRemainingText(window);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
-  const summary = `${window.label}: ${remaining}% left${
-    timeLeft === null ? "" : `, ${timeLeft}% of the window left`
+  const summary = `${window.label}: ${remainingLabel}${
+    window.remainingAmount || timeLeft === null ? "" : `, ${timeLeft}% of the window left`
   }${resetsIn ? `, ${resetsIn}` : ""}`;
 
   return (
@@ -167,7 +169,10 @@ function WindowBar({
       <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
+            {remainingLabel}
+            {!window.remainingAmount && timeLeft !== null
+              ? ` · ${timeLeft}% of the window left`
+              : ""}
           </span>
           {timeLeft !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
@@ -184,23 +189,79 @@ function WindowBar({
   );
 }
 
+function WindowLabelRow({ window }: { readonly window: ServerProviderUsageWindow }) {
+  return (
+    <span className="flex min-w-0 items-start gap-2 text-xs">
+      <span className="min-w-0 text-pretty text-muted-foreground">{window.label}</span>
+      <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
+        {leftoverRemainingText(window)}
+      </span>
+    </span>
+  );
+}
+
+function WindowResetCell({
+  pace,
+  resetsIn,
+}: {
+  readonly pace: ReturnType<typeof paceOf>;
+  readonly resetsIn: string | null;
+}) {
+  return (
+    <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+      {pace ? <PaceIcon pace={pace} /> : null}
+      <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>
+    </span>
+  );
+}
+
+/**
+ * One account's windows as rows: label and percent, bar, pace and countdown.
+ * Compact is a tighter three-column grid for wide surfaces. Stack keeps the
+ * window name fully readable in the composer popover — never ellipsized.
+ */
 export function LimitWindows({
   driver,
   windows,
   now,
   compact = false,
+  stack = false,
 }: {
   readonly driver: ServerProvider["driver"];
   readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
   readonly compact?: boolean;
+  readonly stack?: boolean;
 }) {
   const color = barColor(driver);
+  if (stack) {
+    return (
+      <div className="flex flex-col gap-2.5">
+        {windows.map((window) => {
+          const pace = paceOf(window, now);
+          const resetsIn = formatResetsIn(window, now);
+          return (
+            <div key={window.id} className="flex min-w-0 flex-col gap-1">
+              <WindowLabelRow window={window} />
+              {window.remainingAmount ? null : (
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <WindowBar color={color} window={window} now={now} />
+                  </div>
+                  <WindowResetCell pace={pace} resetsIn={resetsIn} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div
       className={
         compact
-          ? "grid grid-cols-[minmax(0,9rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-0.5"
+          ? "grid grid-cols-[minmax(8rem,1.4fr)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-1"
           : "grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
       }
     >
@@ -209,17 +270,13 @@ export function LimitWindows({
         const resetsIn = formatResetsIn(window, now);
         return (
           <Fragment key={window.id}>
-            <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{window.label}</span>
-              <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
-              </span>
-            </span>
-            <WindowBar color={color} window={window} now={now} />
-            <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-              {pace ? <PaceIcon pace={pace} /> : null}
-              <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>
-            </span>
+            <WindowLabelRow window={window} />
+            {window.remainingAmount ? (
+              <span />
+            ) : (
+              <WindowBar color={color} window={window} now={now} />
+            )}
+            <WindowResetCell pace={pace} resetsIn={resetsIn} />
           </Fragment>
         );
       })}

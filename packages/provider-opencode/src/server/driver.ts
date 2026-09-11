@@ -23,6 +23,7 @@ import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
 import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
+import { attachOpenCodeDeepSeekUsageLimits } from "./deepseekUsageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
@@ -355,6 +356,7 @@ export const OpenCodeDriver: ProviderDriver<
       { concurrency: "unbounded" },
     ).pipe(
       Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
+      Effect.flatMap((draft) => attachOpenCodeDeepSeekUsageLimits({ draft, environment: processEnv, checkedAt: draft.checkedAt }).pipe(Effect.orElseSucceed(() => draft))),
       Effect.map(stampIdentity),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),

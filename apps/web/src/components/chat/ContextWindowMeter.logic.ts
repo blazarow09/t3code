@@ -132,3 +132,25 @@ export function formatContextWindowCost(cost: {
   const fractionDigits = Math.abs(cost.amount) > 0 && Math.abs(cost.amount) < 0.01 ? 4 : 2;
   return `${cost.currency} ${cost.amount.toFixed(fractionDigits)}`;
 }
+
+export function shouldShowComposerUsageMeter(input: {
+  readonly hasLeftoverUsage: boolean;
+  readonly hasContextWindow: boolean;
+  readonly contextMeterEnabled: boolean;
+  readonly reserveContextWindowMeter: boolean;
+}): boolean {
+  return (
+    input.hasLeftoverUsage ||
+    input.reserveContextWindowMeter ||
+    (input.contextMeterEnabled && input.hasContextWindow)
+  );
+}
+
+export function composerUsageCircleUsedPercent(input: {
+  readonly leftoverUsedPercent: number | null;
+  readonly contextUsedPercentage: number | null;
+}): number | null {
+  const value = input.leftoverUsedPercent ?? input.contextUsedPercentage;
+  if (value === null || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, value));
+}

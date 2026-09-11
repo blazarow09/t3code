@@ -45,7 +45,11 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import {
+  collectProviderUsageLimits,
+  leftoverUsageForInstance,
+  USAGE_LIMITS_COMMAND,
+} from "@t3tools/shared/usageLimits";
 import {
   memo,
   useEffect,
@@ -206,6 +210,7 @@ import {
   providerSupportsManualCompaction,
   resolveContextWindowModelDisplayName,
   shouldReserveContextWindowMeter,
+  shouldShowComposerUsageMeter,
 } from "./ContextWindowMeter.logic";
 import {
   buildAttachmentVideoPreview,
@@ -434,7 +439,9 @@ export interface ChatComposerProps {
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
 
+  // Context window / leftover usage
   activeContextWindow: ContextWindowSnapshot | null;
+  usageLimitSources: UsageLimitSourceSnapshots;
   compactThreadUnavailable: boolean;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
@@ -564,6 +571,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     reportedModelSelection,
     activeProjectId,
     activeContextWindow,
+    usageLimitSources,
     compactThreadUnavailable,
     compactDisabled,
     compactDisabledReason,
@@ -1004,6 +1012,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? selectedProviderStatus.reportsContextWindow === true
       : null,
   });
+  const leftoverUsage = useMemo(
+    () =>
+      leftoverUsageForInstance(
+        collectProviderUsageLimits(selectedInstanceId, providerStatuses, usageLimitSources, 0),
+        selectedInstanceId,
+        [selectedModel, activeThreadModelDisplayName, activeThreadModelSelection?.model],
+      ),
+    [
+      activeThreadModelDisplayName,
+      activeThreadModelSelection?.model,
+      providerStatuses,
+      selectedInstanceId,
+      selectedModel,
+      usageLimitSources,
+    ],
+  );
+  const showUsageMeter = shouldShowComposerUsageMeter({
+    hasLeftoverUsage: leftoverUsage !== null,
+    hasContextWindow: activeContextWindow !== null,
+    contextMeterEnabled: settings.contextWindowMeterEnabled,
+    reserveContextWindowMeter,
+  });
+  const usageMeterContextWindow =
+    leftoverUsage !== null || settings.contextWindowMeterEnabled ? activeContextWindow : null;
 
   const [composerCursor, setComposerCursor] = useState(() => {
     const value = isLiteralPendingAnswer ? (activePendingProgress?.customAnswer ?? prompt) : prompt;
@@ -3780,9 +3812,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
-                    activeContextWindow={
-                      settings.contextWindowMeterEnabled ? activeContextWindow : null
-                    }
+                    leftoverUsage={leftoverUsage}
+                    selectedModel={selectedModel}
+                    activeContextWindow={usageMeterContextWindow}
+                    showUsageMeter={showUsageMeter}
                     reserveContextWindowMeter={reserveContextWindowMeter}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
                     pendingAction={pendingPrimaryAction}

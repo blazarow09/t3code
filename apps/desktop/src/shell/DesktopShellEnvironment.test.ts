@@ -72,6 +72,7 @@ function runShellEnvironment(input: {
     command: ChildProcess.Command,
   ) => string | { output: string; exitCode: number };
   readonly failure?: PlatformError.PlatformError;
+  readonly failFor?: (command: ChildProcess.Command) => PlatformError.PlatformError | undefined;
 }) {
   const layerEnvironment = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -82,7 +83,8 @@ function runShellEnvironment(input: {
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
-      if (input.failure !== undefined) return Effect.fail(input.failure);
+      const failure = input.failFor?.(command) ?? input.failure;
+      if (failure !== undefined) return Effect.fail(failure);
       const result = input.handler(command);
       return Effect.succeed(
         typeof result === "string"

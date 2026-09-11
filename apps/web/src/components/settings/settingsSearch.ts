@@ -712,7 +712,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "legacy-context-window-indicator",
     title: "Context window indicator (legacy)",
     to: "/settings/labs",
-    searchTerms: ["composer meter usage tokens circle old"],
+    searchTerms: ["composer meter usage tokens circle leftover quota limits old"],
   },
   {
     id: "keybindings",

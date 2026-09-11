@@ -2,10 +2,13 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  composerUsageCircleUsedPercent,
+  formatContextWindowCompactionMessage,
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
   resolveContextWindowModelDisplayName,
   shouldReserveContextWindowMeter,
+  shouldShowComposerUsageMeter,
 } from "./ContextWindowMeter.logic";
 
 function claudeProvider(input: {
@@ -155,5 +158,26 @@ describe("shouldReserveContextWindowMeter", () => {
         providerReportsContextWindow: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("composer usage meter", () => {
+  const hidden = {
+    hasLeftoverUsage: false,
+    hasContextWindow: false,
+    contextMeterEnabled: false,
+    reserveContextWindowMeter: false,
+  };
+
+  it("shows leftover quota regardless of the context meter setting", () => {
+    expect(shouldShowComposerUsageMeter({ ...hidden, hasLeftoverUsage: true })).toBe(true);
+    expect(shouldShowComposerUsageMeter({ ...hidden, hasContextWindow: true })).toBe(false);
+    expect(shouldShowComposerUsageMeter({ ...hidden, reserveContextWindowMeter: true })).toBe(true);
+  });
+
+  it("uses leftover spend for the circle and falls back to context", () => {
+    expect(composerUsageCircleUsedPercent({ leftoverUsedPercent: 12, contextUsedPercentage: 80 })).toBe(12);
+    expect(composerUsageCircleUsedPercent({ leftoverUsedPercent: null, contextUsedPercentage: 140 })).toBe(100);
+    expect(composerUsageCircleUsedPercent({ leftoverUsedPercent: null, contextUsedPercentage: null })).toBeNull();
   });
 });

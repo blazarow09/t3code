@@ -28,6 +28,7 @@ import {
   collectProviderUsageLimits,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
+  leftoverUsageForInstance,
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
@@ -100,6 +101,7 @@ import {
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
+import { ComposerUsageMeter } from "./ComposerUsageMeter";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import type { ComposerEnvironmentCandidate } from "@t3tools/client-runtime/composerThreadItems";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
@@ -525,6 +527,20 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     }
     return report !== null;
   };
+  const leftoverUsage = useMemo(
+    () =>
+      leftoverUsageForInstance(
+        collectProviderUsageLimits(
+          currentModelSelection.instanceId,
+          props.serverConfig?.providers ?? [],
+          props.serverConfig?.usageLimitSources ?? [],
+          0,
+        ),
+        currentModelSelection.instanceId,
+        currentModelSelection.model,
+      ),
+    [currentModelSelection.instanceId, currentModelSelection.model, props.serverConfig],
+  );
 
   const mentionableEnvironments = useMentionableEnvironments();
   const composerMenu = useComposerCommandMenu({
