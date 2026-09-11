@@ -2064,7 +2064,7 @@ function LegacyFeaturesSection() {
             />
             <SettingsRow
               {...searchableSetting("legacy-context-window-indicator")}
-              description="Shows context window usage as a circular indicator in the composer."
+              description="Shows leftover plan usage whenever the provider reports it, and context window usage when this is on."
               control={
                 <Switch
                   checked={settings.contextWindowMeterEnabled}

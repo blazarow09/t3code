@@ -2,12 +2,14 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  composerUsageCircleUsedPercent,
   formatContextWindowCompactionMessage,
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
   resolveContextWindowModelDisplayName,
   shouldOfferResumeCompaction,
   shouldReserveContextWindowMeter,
+  shouldShowComposerUsageMeter,
 } from "./ContextWindowMeter.logic";
 
 function claudeProvider(input: {
@@ -284,5 +286,50 @@ describe("shouldReserveContextWindowMeter", () => {
     expect(shouldReserveContextWindowMeter({ ...loadingStartedThread, meterEnabled: false })).toBe(
       false,
     );
+  });
+});
+
+describe("shouldShowComposerUsageMeter", () => {
+  const hidden = {
+    hasLeftoverUsage: false,
+    hasContextWindow: false,
+    contextMeterEnabled: false,
+    reserveContextWindowMeter: false,
+  };
+
+  it("shows leftover quota even when the legacy context meter is off", () => {
+    expect(shouldShowComposerUsageMeter({ ...hidden, hasLeftoverUsage: true })).toBe(true);
+  });
+
+  it("shows context-only usage only when that meter is enabled", () => {
+    expect(shouldShowComposerUsageMeter({ ...hidden, hasContextWindow: true })).toBe(false);
+    expect(
+      shouldShowComposerUsageMeter({
+        ...hidden,
+        hasContextWindow: true,
+        contextMeterEnabled: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("holds the slot while a context snapshot is still loading", () => {
+    expect(shouldShowComposerUsageMeter({ ...hidden, reserveContextWindowMeter: true })).toBe(true);
+  });
+});
+
+describe("composerUsageCircleUsedPercent", () => {
+  it("prefers leftover spend over the thread's context window", () => {
+    expect(
+      composerUsageCircleUsedPercent({ leftoverUsedPercent: 12, contextUsedPercentage: 80 }),
+    ).toBe(12);
+  });
+
+  it("falls back to context and clamps", () => {
+    expect(
+      composerUsageCircleUsedPercent({ leftoverUsedPercent: null, contextUsedPercentage: 140 }),
+    ).toBe(100);
+    expect(
+      composerUsageCircleUsedPercent({ leftoverUsedPercent: null, contextUsedPercentage: null }),
+    ).toBeNull();
   });
 });

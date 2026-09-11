@@ -104,7 +104,10 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.label === b.label &&
     a.usedPercent === b.usedPercent &&
     a.resetsAt === b.resetsAt &&
-    a.windowDurationMins === b.windowDurationMins
+    a.windowDurationMins === b.windowDurationMins &&
+    a.remainingAmount === b.remainingAmount &&
+    a.remainingCurrency === b.remainingCurrency &&
+    a.scope === b.scope
   );
 }
 

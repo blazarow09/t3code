@@ -69,6 +69,7 @@ function runShellEnvironment(input: {
   readonly platform: NodeJS.Platform;
   readonly handler: (command: ChildProcess.Command) => string;
   readonly failure?: PlatformError.PlatformError;
+  readonly failFor?: (command: ChildProcess.Command) => PlatformError.PlatformError | undefined;
 }) {
   const environmentLayer = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -78,11 +79,12 @@ function runShellEnvironment(input: {
   );
   const spawnerLayer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) =>
-      input.failure === undefined
+    ChildProcessSpawner.make((command) => {
+      const failure = input.failFor?.(command) ?? input.failure;
+      return failure === undefined
         ? Effect.succeed(makeProcess(input.handler(command)))
-        : Effect.fail(input.failure),
-    ),
+        : Effect.fail(failure);
+    }),
   );
 
   const program = Effect.gen(function* () {
@@ -345,6 +347,46 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
+    }),
+  );
+
+  it.effect("falls back to powershell.exe when pwsh.exe is missing", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        PATH: "C:\\Windows\\System32",
+      };
+      const commands: string[] = [];
+      const messages: Array<unknown> = [];
+      const logger = Logger.make(({ message }) => {
+        messages.push(message);
+      });
+      const pwshMissing = PlatformError.systemError({
+        _tag: "NotFound",
+        module: "ChildProcess",
+        method: "spawn",
+        pathOrDescriptor: "pwsh.exe",
+      });
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        failFor: (command) =>
+          command._tag === "StandardCommand" && command.command === "pwsh.exe"
+            ? pwshMissing
+            : undefined,
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          return envOutput({ PATH: "C:\\Tools;C:\\Windows\\System32" });
+        },
+      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+
+      assert.deepEqual(commands, ["powershell.exe", "powershell.exe"]);
+      assert.include(env.PATH ?? "", "C:\\Tools");
+      const errors = messages
+        .flatMap((message) => (Array.isArray(message) ? message : [message]))
+        .filter(isDesktopShellEnvironmentCommandError);
+      assert.lengthOf(errors, 0);
     }),
   );
 

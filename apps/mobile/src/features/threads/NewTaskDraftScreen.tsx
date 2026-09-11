@@ -64,7 +64,14 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import {
+  collectProviderUsageLimits,
+  hasProviderUsageLimits,
+  isUsageLimitsCommand,
+  leftoverUsageForInstance,
+  leftoverUsageLabel,
+} from "@t3tools/shared/usageLimits";
+import { ComposerUsageMeter } from "./ComposerUsageMeter";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
@@ -443,6 +450,29 @@ export function NewTaskDraftScreen(props: {
     () => composerStripAttachments(flow.attachments),
     [flow.attachments],
   );
+  const leftoverUsage = useMemo(() => {
+    const instanceId = flow.selectedModel?.instanceId;
+    if (!instanceId) return null;
+    return leftoverUsageForInstance(
+      collectProviderUsageLimits(
+        instanceId,
+        selectedEnvironmentServerConfig?.providers ?? [],
+        selectedEnvironmentServerConfig?.usageLimitSources ?? [],
+        0,
+      ),
+      instanceId,
+      flow.selectedModel?.model,
+    );
+  }, [flow.selectedModel?.instanceId, flow.selectedModel?.model, selectedEnvironmentServerConfig]);
+  const openLeftoverUsage = useCallback(() => {
+    if (!leftoverUsage) return;
+    const now = Date.now();
+    const lines = leftoverUsage.windows.map((window) => leftoverUsageLabel(window, now));
+    Alert.alert(
+      leftoverUsage.plan ? `Plan usage · ${leftoverUsage.plan}` : "Usage limits",
+      lines.join("\n"),
+    );
+  }, [leftoverUsage]);
   const composerMenu = useComposerCommandMenu({
     draftMessage: flow.prompt,
     ownerKey: flow.draftKey,
@@ -1676,7 +1706,7 @@ export function NewTaskDraftScreen(props: {
                     onPickFiles={handlePickFiles}
                   />
                   <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
-                    <View className="min-w-0 shrink">
+                    <View className="min-w-0 shrink flex-row items-center">
                       <ComposerInlineControl
                         accessibilityLabel="Model and reasoning settings"
                         disabled={isComposerInteractionLocked}
@@ -1691,6 +1721,13 @@ export function NewTaskDraftScreen(props: {
                         maxWidth="100%"
                         onPress={settingsSheetPresentation.open}
                       />
+                      {leftoverUsage ? (
+                        <ComposerUsageMeter
+                          leftover={leftoverUsage}
+                          modelHint={flow.selectedModel?.model}
+                          onPress={openLeftoverUsage}
+                        />
+                      ) : null}
                     </View>
                     {flow.planModeEnabled ? (
                       <ComposerInlineControl

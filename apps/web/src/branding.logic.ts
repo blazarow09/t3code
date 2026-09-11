@@ -4,7 +4,8 @@ export function formatAppDisplayName(input: {
   readonly baseName: string;
   readonly stageLabel: string;
 }): string {
-  if (input.stageLabel.trim().toLowerCase() === "latest") {
+  const normalized = input.stageLabel.trim().toLowerCase();
+  if (normalized === "latest" || normalized === "dev") {
     return input.baseName;
   }
 

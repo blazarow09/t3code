@@ -27,6 +27,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
+import { attachOpenCodeDeepSeekUsageLimits } from "../Layers/deepseekUsageLimits.ts";
 import { readOpenCodeGoUsageLimits } from "../Layers/openCodeUsageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -161,6 +162,13 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         { concurrency: "unbounded" },
       ).pipe(
         Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
+        Effect.flatMap((draft) =>
+          attachOpenCodeDeepSeekUsageLimits({
+            draft,
+            environment: processEnv,
+            checkedAt: draft.checkedAt,
+          }).pipe(Effect.orElseSucceed(() => draft)),
+        ),
         Effect.map(stampIdentity),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, pathService),

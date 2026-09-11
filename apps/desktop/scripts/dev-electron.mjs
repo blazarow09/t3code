@@ -59,12 +59,14 @@ NodeChildProcess.execFileSync(
   { stdio: "inherit" },
 );
 
-await waitForResources({
+const resourceWait = {
   baseDir: desktopDir,
   files: requiredFiles,
   tcpHost: devServer.hostname,
   tcpPort: port,
-});
+};
+
+await waitForResources(resourceWait);
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
@@ -196,6 +198,8 @@ function scheduleRestart() {
       .then(async () => {
         await stopApp();
         if (!shuttingDown) {
+          // Wait out pack --watch's clean:true wipe so Electron does not relaunch on a missing main.cjs.
+          await waitForResources(resourceWait);
           startApp();
         }
       });

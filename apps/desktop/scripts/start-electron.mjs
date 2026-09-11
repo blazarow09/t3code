@@ -1,7 +1,20 @@
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { desktopDir, resolveElectronLaunchCommand } from "./electron-launcher.mjs";
+
+const mainEntryPath = NodePath.join(desktopDir, "dist-electron", "main.cjs");
+if (!NodeFS.existsSync(mainEntryPath)) {
+  console.error(
+    `Unable to find Electron app at ${mainEntryPath}.\n` +
+      "Build the desktop main process first:\n" +
+      "  vp run --filter @t3tools/desktop build\n" +
+      "Or start the watched desktop stack:\n" +
+      "  npm run dev:desktop",
+  );
+  process.exit(1);
+}
 
 NodeChildProcess.execFileSync(
   process.execPath,

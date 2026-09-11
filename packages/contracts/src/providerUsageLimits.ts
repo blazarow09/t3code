@@ -24,6 +24,17 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /**
+   * Absolute prepaid leftover when the provider reports money, not a
+   * subscription percent. Hover and Limits show this instead of inventing a %.
+   */
+  remainingAmount: Schema.optional(TrimmedNonEmptyString),
+  remainingCurrency: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Model scope such as `deepseek`. Composer leftover only uses the window
+   * when the selected model names that provider; unscoped windows stay global.
+   */
+  scope: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 

@@ -19,6 +19,7 @@ import {
   collectProviderUsageLimits,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
+  leftoverUsageForInstance,
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
@@ -90,6 +91,7 @@ import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
+import { ComposerUsageMeter } from "./ComposerUsageMeter";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   ComposerDictationCancelAction,
@@ -371,6 +373,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
     return report !== null;
   }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
+  const leftoverUsage = useMemo(
+    () =>
+      leftoverUsageForInstance(
+        collectProviderUsageLimits(
+          currentModelSelection.instanceId,
+          props.serverConfig?.providers ?? [],
+          props.serverConfig?.usageLimitSources ?? [],
+          0,
+        ),
+        currentModelSelection.instanceId,
+        currentModelSelection.model,
+      ),
+    [currentModelSelection.instanceId, currentModelSelection.model, props.serverConfig],
+  );
 
   const composerMenu = useComposerCommandMenu({
     draftMessage: props.draftMessage,
@@ -944,7 +960,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       onPickMedia={props.onPickDraftMedia}
                       onPickFiles={props.onPickDraftFiles}
                     />
-                    <View className="min-w-0 shrink">
+                    <View className="min-w-0 shrink flex-row items-center">
                       <ComposerInlineControl
                         accessibilityLabel="Model and reasoning settings"
                         emphasized
@@ -955,6 +971,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         maxWidth="100%"
                         onPress={openSettings}
                       />
+                      {leftoverUsage ? (
+                        <ComposerUsageMeter
+                          leftover={leftoverUsage}
+                          modelHint={currentModelSelection.model}
+                          onPress={openUsageLimits}
+                        />
+                      ) : null}
                     </View>
                   </View>
                 )}

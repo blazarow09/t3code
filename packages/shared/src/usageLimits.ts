@@ -407,6 +407,163 @@ export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
 
+/** Windows that can be drawn as leftover quota. Unavailable or empty snapshots yield none. */
+export function usableLimitWindows(
+  limits: ServerProviderUsageLimits | undefined,
+): readonly ServerProviderUsageWindow[] {
+  if (!limits || limitsNotice(limits) !== null) return [];
+  return limits.windows;
+}
+
+/** Cursor's included-model bucket on the leftover circle and Limits rows. */
+export const CURSOR_MODELS_WINDOW_ID = "cursor_models";
+/** Cursor's API / third-party model bucket. */
+export const OTHER_MODELS_WINDOW_ID = "other_models";
+export const CURSOR_MODELS_WINDOW_LABEL = "Cursor Models";
+export const OTHER_MODELS_WINDOW_LABEL = "Other models";
+
+/** Prepaid DeepSeek balance reported through OpenCode. Absolute money, not a plan %. */
+export const DEEPSEEK_BALANCE_WINDOW_ID = "deepseek_balance";
+export const DEEPSEEK_USAGE_SCOPE = "deepseek";
+export const DEEPSEEK_BALANCE_WINDOW_LABEL = "Top-up · DeepSeek";
+
+const CURSOR_OWNED_MODEL = /(?:^|[/\s_-])(composer|auto)(?:$|[/\s_-])|^cursor(?:$|[\s_-])/i;
+const CURSOR_OTHER_MODEL =
+  /(?:claude|anthropic|sonnet|opus|haiku|fable|gpt|openai|chatgpt|o[1-4]|gemini|google)/i;
+
+/**
+ * Which Cursor leftover bucket a selected model spends. Composer / Auto /
+ * Cursor-branded slugs use Cursor Models; Claude/GPT/Gemini via Cursor use
+ * Other models. Unknown names return null so the UI can show both.
+ */
+export function cursorUsageBucketForModel(
+  modelHint: string | null | undefined,
+): typeof CURSOR_MODELS_WINDOW_ID | typeof OTHER_MODELS_WINDOW_ID | null {
+  const hint = modelHint?.trim();
+  if (!hint) return null;
+  if (CURSOR_OTHER_MODEL.test(hint)) return OTHER_MODELS_WINDOW_ID;
+  if (CURSOR_OWNED_MODEL.test(hint)) return CURSOR_MODELS_WINDOW_ID;
+  return null;
+}
+
+function modelHints(
+  hint?: string | null | readonly (string | null | undefined)[],
+): readonly string[] {
+  if (hint == null) return [];
+  if (typeof hint === "string") {
+    const trimmed = hint.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  return hint.flatMap((value) => {
+    const trimmed = value?.trim();
+    return trimmed ? [trimmed] : [];
+  });
+}
+
+function windowScope(window: ServerProviderUsageWindow): string | undefined {
+  const explicit = window.scope?.trim().toLowerCase();
+  if (explicit) return explicit;
+  const separator = window.label.lastIndexOf("·");
+  if (separator < 0) return undefined;
+  const scoped = window.label
+    .slice(separator + 1)
+    .trim()
+    .toLowerCase();
+  return scoped.length > 0 ? scoped : undefined;
+}
+
+function hintMatchesScope(hint: string, scope: string): boolean {
+  const hintLower = hint.toLowerCase();
+  return hintLower.includes(scope) || scope.includes(hintLower);
+}
+
+function windowMatchingModelHint(
+  windows: readonly ServerProviderUsageWindow[],
+  hint: string,
+): ServerProviderUsageWindow | undefined {
+  const hintLower = hint.toLowerCase();
+  const scoped = windows.find((window) => {
+    const scope = windowScope(window);
+    return scope !== undefined && hintMatchesScope(hintLower, scope);
+  });
+  if (scoped) return scoped;
+  const bucket = cursorUsageBucketForModel(hint);
+  return bucket ? windows.find((window) => window.id === bucket) : undefined;
+}
+
+/**
+ * Windows the selected model actually spends. Unscoped rows stay; a window
+ * with `scope` (DeepSeek top-up) is kept only when the hint names it. No hint
+ * keeps every row so a picker that has not chosen yet still shows leftover.
+ */
+export function leftoverWindowsForModel(
+  windows: readonly ServerProviderUsageWindow[],
+  modelHint?: string | null | readonly (string | null | undefined)[],
+): readonly ServerProviderUsageWindow[] {
+  const hints = modelHints(modelHint);
+  if (hints.length === 0) return windows;
+  return windows.filter((window) => {
+    const scope = window.scope?.trim().toLowerCase();
+    if (!scope) return true;
+    return hints.some((hint) => hintMatchesScope(hint, scope));
+  });
+}
+
+/**
+ * Session first, then weekly, monthly, other. A model hint can override that
+ * so the composer circle tracks `Weekly · Fable` or Cursor Models vs Other
+ * models when we can tell which bucket the selected model spends.
+ */
+export function primaryUsageWindow(
+  windows: readonly ServerProviderUsageWindow[],
+  modelHint?: string | null | readonly (string | null | undefined)[],
+): ServerProviderUsageWindow | null {
+  if (windows.length === 0) return null;
+  for (const hint of modelHints(modelHint)) {
+    const match = windowMatchingModelHint(windows, hint);
+    if (match) return match;
+  }
+  let best = windows[0]!;
+  for (let index = 1; index < windows.length; index += 1) {
+    const window = windows[index]!;
+    if (WINDOW_KIND_ORDER[window.kind] < WINDOW_KIND_ORDER[best.kind]) {
+      best = window;
+    }
+  }
+  return best;
+}
+
+/**
+ * Leftover quota for the instance that will run the next turn. Native rows
+ * for that instance win; otherwise the first usable account on the report
+ * (a hub row for the same driver).
+ */
+export interface LeftoverUsage {
+  readonly driver: ServerProvider["driver"];
+  readonly plan: string | undefined;
+  readonly windows: readonly ServerProviderUsageWindow[];
+}
+
+export function leftoverUsageForInstance(
+  report: UsageLimitsReport | null,
+  instanceId: ProviderInstanceId,
+  modelHint?: string | null | readonly (string | null | undefined)[],
+): LeftoverUsage | null {
+  if (!report) return null;
+  const accounts = report.accounts.filter(
+    (account) => usableLimitWindows(account.limits).length > 0,
+  );
+  if (accounts.length === 0) return null;
+  const selected = accounts.find((account) => account.instanceId === instanceId) ?? accounts[0]!;
+  const windows = leftoverWindowsForModel(usableLimitWindows(selected.limits), modelHint);
+  if (windows.length === 0) return null;
+  return {
+    driver: selected.driver,
+    plan: selected.plan,
+    windows,
+  };
+}
+
 function resetMillis(window: ServerProviderUsageWindow): number | null {
   if (window.resetsAt === undefined) return null;
   const at = Date.parse(window.resetsAt);
@@ -457,6 +614,32 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
   return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
+}
+
+/** Prepaid leftover as `$12.50` / `¥110.00`, or null when the window is a percent. */
+export function formatRemainingAmount(window: ServerProviderUsageWindow): string | null {
+  const amount = window.remainingAmount?.trim();
+  if (!amount) return null;
+  const currency = window.remainingCurrency?.trim().toUpperCase();
+  if (currency === "USD") return `$${amount}`;
+  if (currency === "CNY") return `¥${amount}`;
+  return currency ? `${amount} ${currency}` : amount;
+}
+
+/** `¥110.00 left` or `60% left`. */
+export function leftoverRemainingText(window: ServerProviderUsageWindow): string {
+  const remaining = formatRemainingAmount(window);
+  return remaining ? `${remaining} left` : `${remainingPercent(window)}% left`;
+}
+
+/** One-line leftover status for the composer circle. */
+export function leftoverUsageLabel(window: ServerProviderUsageWindow, now: number): string {
+  const remaining = formatRemainingAmount(window);
+  const leftover = remaining
+    ? `${remaining} of ${window.label} left`
+    : `${remainingPercent(window)}% of ${window.label} left`;
+  const resetsIn = formatResetsIn(window, now);
+  return resetsIn ? `${leftover}. ${resetsIn}` : leftover;
 }
 
 /** Limit commands are served by T3 from the same snapshots as Usage → Limits. */

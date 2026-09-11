@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  formatAppDisplayName,
   resolveServerBackedAppDisplayName,
   resolveServerBackedAppStageLabel,
 } from "./branding.logic";
@@ -69,9 +70,20 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBeNull();
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBeNull();
   });
+
+  it("does not suffix Dev onto the default product name", async () => {
+    const branding = await import("./branding");
+
+    expect(branding.APP_STAGE_LABEL).toBe("Dev");
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code");
+  });
 });
 
 describe("branding logic", () => {
+  it("does not suffix Dev onto the product name", () => {
+    expect(formatAppDisplayName({ baseName: "T3 Code", stageLabel: "Dev" })).toBe("T3 Code");
+  });
+
   it("returns Nightly for nightly primary server versions", () => {
     expect(
       resolveServerBackedAppStageLabel({

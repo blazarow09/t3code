@@ -225,6 +225,24 @@ const endMarker = (name: string) => `__T3CODE_ENV_${name}_END__`;
 
 const executableName = (command: string): string => command.split(/[\\/]/u).at(-1) ?? command;
 
+const isNotFoundCause = (cause: unknown): boolean => {
+  if (typeof cause !== "object" || cause === null) {
+    return false;
+  }
+
+  const record = cause as { readonly _tag?: unknown; readonly reason?: unknown };
+  if (record._tag === "NotFound" || record.reason === "NotFound") {
+    return true;
+  }
+
+  return (
+    typeof record.reason === "object" &&
+    record.reason !== null &&
+    "_tag" in record.reason &&
+    record.reason._tag === "NotFound"
+  );
+};
+
 const logShellEnvironmentCommandError = (
   error: DesktopShellEnvironmentCommandError | DesktopShellEnvironmentCommandTimeoutError,
 ) =>
@@ -288,6 +306,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Duration;
   readonly shell?: boolean;
+  readonly ignoreNotFound?: boolean;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const output = yield* spawner
@@ -313,7 +332,9 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
       ),
       Effect.catchTags({
         DesktopShellEnvironmentCommandError: (error) =>
-          logShellEnvironmentCommandError(error).pipe(Effect.as("")),
+          input.ignoreNotFound === true && isNotFoundCause(error.cause)
+            ? Effect.succeed("")
+            : logShellEnvironmentCommandError(error).pipe(Effect.as("")),
       }),
       Effect.timeoutOption(input.timeout),
     );
@@ -366,12 +387,13 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
       captureWindowsEnvironmentCommand(names),
     ];
 
-    for (const command of WINDOWS_SHELL_CANDIDATES) {
+    for (const [index, command] of WINDOWS_SHELL_CANDIDATES.entries()) {
       const output = yield* runCommandOutput({
         probe: options.loadProfile ? "powershell-profile" : "powershell-no-profile",
         command,
         args,
         timeout: LOGIN_SHELL_TIMEOUT,
+        ignoreNotFound: index < WINDOWS_SHELL_CANDIDATES.length - 1,
       });
       const environment = extractEnvironment(output, names);
       if (Object.keys(environment).length > 0) {
