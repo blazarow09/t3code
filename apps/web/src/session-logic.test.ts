@@ -13,6 +13,7 @@ import {
   createMessageAttachmentPreviewProjector,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveAgentToolActivity,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
   deriveWorkLogEntries,
@@ -2369,6 +2370,82 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
       }),
     ]);
     expect(entries).toHaveLength(0);
+  });
+});
+
+describe("deriveAgentToolActivity", () => {
+  it("folds attributed non-task rows per agent in activity order", () => {
+    const activities = [
+      makeActivity({
+        id: "a3",
+        kind: "tool.completed",
+        summary: "Grep",
+        payload: { agentId: "agent-1" },
+        sequence: 3,
+      }),
+      makeActivity({
+        id: "a1",
+        kind: "tool.completed",
+        summary: "Read",
+        payload: { agentId: "agent-1", title: "Read file" },
+        sequence: 1,
+      }),
+      makeActivity({
+        id: "a2",
+        kind: "tool.completed",
+        summary: "Bash",
+        payload: { agentId: "agent-2", title: "Ran command" },
+        sequence: 2,
+      }),
+    ];
+    const result = deriveAgentToolActivity(activities);
+    expect(Object.keys(result).toSorted()).toEqual(["agent-1", "agent-2"]);
+    expect(result["agent-1"]).toEqual([
+      { at: "2026-02-23T00:00:00.000Z", label: "Read file" },
+      { at: "2026-02-23T00:00:00.000Z", label: "Grep" },
+    ]);
+    expect(result["agent-2"]).toEqual([{ at: "2026-02-23T00:00:00.000Z", label: "Ran command" }]);
+  });
+
+  it("collapses a tool's lifecycle rows by toolCallId, keeping start time and latest label", () => {
+    const activities = [
+      makeActivity({
+        id: "t1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Running",
+        payload: { agentId: "agent-1", toolCallId: "call-1", title: "Running tests" },
+        sequence: 1,
+      }),
+      makeActivity({
+        id: "t2",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "tool.completed",
+        summary: "Done",
+        payload: { agentId: "agent-1", toolCallId: "call-1", title: "Tests passed" },
+        sequence: 2,
+      }),
+    ];
+    expect(deriveAgentToolActivity(activities)["agent-1"]).toEqual([
+      { at: "2026-02-23T00:00:01.000Z", label: "Tests passed" },
+    ]);
+  });
+
+  it("ignores unattributed rows, blank agent ids, and task lifecycle rows", () => {
+    const activities = [
+      makeActivity({ kind: "tool.completed", summary: "Bash", payload: {} }),
+      makeActivity({
+        kind: "task.progress",
+        summary: "working",
+        payload: { taskId: "agent-1", agentId: "agent-1" },
+      }),
+      makeActivity({ kind: "tool.completed", summary: "Read", payload: { agentId: "  " } }),
+    ];
+    expect(deriveAgentToolActivity(activities)).toEqual({});
+  });
+
+  it("returns an empty record when nothing is attributed", () => {
+    expect(deriveAgentToolActivity([])).toEqual({});
   });
 });
 

@@ -448,6 +448,67 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
   return typeof payload.agentId === "string" && payload.agentId.trim().length > 0;
 }
 
+export interface AgentToolActivityEntry {
+  readonly at: string;
+  readonly label: string;
+}
+
+/**
+ * Tool history attributed to a subagent. The main timeline deliberately
+ * re-homes rows stamped with `payload.agentId` off the work log (see
+ * isAgentInternalActivity); this folds them per agent so the Agents surface
+ * can show what a spawned agent actually did. Lifecycle rows for the same
+ * `toolCallId` collapse to one entry, keeping the call's start time and its
+ * latest label. Pure — memoize by activity-list identity at the call site.
+ */
+export function deriveAgentToolActivity(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): Record<string, ReadonlyArray<AgentToolActivityEntry>> {
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const byAgent = new Map<string, AgentToolActivityEntry[]>();
+  // agentId+toolCallId → row index, so a completing row replaces its
+  // in-progress row instead of appending a duplicate.
+  const rowIndexByToolCall = new Map<string, number>();
+  for (const activity of ordered) {
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    if (!payload) {
+      continue;
+    }
+    const agentId = asTrimmedString(payload.agentId);
+    if (!agentId) {
+      continue;
+    }
+    // Task lifecycle rows describe the agent itself, not its tool calls.
+    if (
+      activity.kind === "task.started" ||
+      activity.kind === "task.progress" ||
+      activity.kind === "task.updated" ||
+      activity.kind === "task.completed"
+    ) {
+      continue;
+    }
+    const label = asTrimmedString(payload.title) ?? activity.summary;
+    const toolCallId = asTrimmedString(payload.toolCallId);
+    const entries = byAgent.get(agentId) ?? [];
+    const rowKey = toolCallId ? `${agentId}\u0000${toolCallId}` : null;
+    const existingIndex = rowKey ? rowIndexByToolCall.get(rowKey) : undefined;
+    const existing = existingIndex === undefined ? undefined : entries[existingIndex];
+    if (existing !== undefined && existingIndex !== undefined) {
+      entries[existingIndex] = { at: existing.at, label };
+    } else {
+      entries.push({ at: activity.createdAt, label });
+      if (rowKey) {
+        rowIndexByToolCall.set(rowKey, entries.length - 1);
+      }
+    }
+    byAgent.set(agentId, entries);
+  }
+  return Object.fromEntries(byAgent);
+}
+
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): WorkLogEntry[] {

@@ -5,7 +5,8 @@
  * Visualization rules (from live-test feedback):
  * - Spawn order is stable. Activity and completion update rows in place.
  * - Agent rows reserve three fixed lines for identity, activity, and metrics;
- *   changing data must never change their height.
+ *   changing data must never change their height. Non-workflow rows expand in
+ *   place: the three-line row stays put and read-only detail renders below it.
  * - Workflow expansion is presentation state. A live run stays expanded when
  *   it settles; older collapsed runs can still be opened at run granularity.
  * - Static status dots, DOM-write elapsed timers, plain token counters.
@@ -24,6 +25,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import type { AgentToolActivityEntry } from "~/session-logic";
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -136,11 +138,207 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
   );
 }
 
-/** Flat, non-interactive agent status line. No unfold. */
-function AgentRow({ agent }: { agent: RuntimeSubagent }) {
-  const visuals = STATUS_VISUALS[agent.status];
-  const statusLabel =
-    agent.kind === "subagent_batch" && agent.status === "idle" ? "Idle" : visuals.label;
+function agentStatusLabel(agent: RuntimeSubagent): string {
+  return agent.kind === "subagent_batch" && agent.status === "idle"
+    ? "Idle"
+    : STATUS_VISUALS[agent.status].label;
+}
+
+function formatActivityTime(at: string): string {
+  const date = new Date(at);
+  return Number.isNaN(date.getTime())
+    ? ""
+    : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+/** Read-only key/value line for the expanded agent detail. */
+function DetailRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex gap-2 text-xs">
+      <span className="w-20 shrink-0 text-muted-foreground/70">{label}</span>
+      <span
+        className={cn("min-w-0 break-words text-foreground/90", mono && "font-mono text-[.7rem]")}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function DetailSectionHeading({
+  children,
+  destructive = false,
+}: {
+  children: string;
+  destructive?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "text-[.65rem] font-medium uppercase tracking-wider",
+        destructive ? "text-destructive-foreground" : "text-muted-foreground/70",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ActivityTimeline({
+  heading,
+  entries,
+}: {
+  heading: string;
+  entries: ReadonlyArray<{ at: string; label: string }>;
+}) {
+  return (
+    <div className="mt-2">
+      <DetailSectionHeading>{heading}</DetailSectionHeading>
+      <ol className="mt-1 space-y-0.5">
+        {entries.map((entry, index) => (
+          <li key={`${entry.at}-${index}`} className="flex gap-2 text-xs">
+            <span className="shrink-0 font-mono text-[.65rem] tabular-nums text-muted-foreground/60">
+              {formatActivityTime(entry.at)}
+            </span>
+            <span className="min-w-0 break-words text-muted-foreground">{entry.label}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/**
+ * Inline drill-down for one spawned agent: metrics, activity, outcome, and
+ * read-only run handles. Renders below the fixed row so the roster's height
+ * contract is untouched; only open rows mount it.
+ */
+function AgentDetail({
+  agent,
+  toolActivity,
+}: {
+  agent: RuntimeSubagent;
+  toolActivity?: ReadonlyArray<AgentToolActivityEntry> | undefined;
+}) {
+  const usage = agent.usage;
+  const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
+  const tokenBreakdown = usage
+    ? [
+        `${formatSubagentTokenCount(usage.totalTokens)} total`,
+        usage.inputTokens !== undefined
+          ? `${formatSubagentTokenCount(usage.inputTokens)} in`
+          : null,
+        usage.outputTokens !== undefined
+          ? `${formatSubagentTokenCount(usage.outputTokens)} out`
+          : null,
+        usage.reasoningOutputTokens !== undefined
+          ? `${formatSubagentTokenCount(usage.reasoningOutputTokens)} reasoning`
+          : null,
+      ]
+        .filter((value): value is string => value !== null)
+        .join(" · ")
+    : "—";
+  const runHandles = agent.runHandles;
+  const hasHandles = runHandles !== null || agent.outputFile !== null;
+  const hasToolHistory = toolActivity !== undefined && toolActivity.length > 0;
+  const activityEmpty =
+    agent.recentActivity.length === 0 &&
+    agent.result === null &&
+    agent.error === null &&
+    !hasToolHistory;
+
+  return (
+    <div className="mb-1 ml-2 mr-1.5 mt-0.5 rounded-md border border-border/60 bg-background/60 p-2">
+      <div className="flex flex-col gap-0.5">
+        <DetailRow label="Status" value={agentStatusLabel(agent)} />
+        <DetailRow label="Model" value={modelLabel ?? "—"} />
+        <DetailRow label="Runs" value={String(agent.activationCount)} />
+        <DetailRow label="Tokens" value={tokenBreakdown} mono />
+        <DetailRow
+          label="Tool uses"
+          value={usage?.toolUses !== undefined ? String(usage.toolUses) : "—"}
+        />
+        <DetailRow
+          label="Duration"
+          value={
+            usage?.durationMs !== undefined ? formatElapsedSeconds(usage.durationMs / 1000) : "—"
+          }
+        />
+      </div>
+      {agent.recentActivity.length > 0 ? (
+        <ActivityTimeline
+          heading="Activity"
+          entries={agent.recentActivity.map((entry) => ({ at: entry.at, label: entry.summary }))}
+        />
+      ) : activityEmpty ? (
+        <p className="mt-2 text-xs text-muted-foreground/60">No activity recorded.</p>
+      ) : null}
+      {hasToolHistory ? <ActivityTimeline heading="Tool history" entries={toolActivity} /> : null}
+      {agent.result !== null ? (
+        <div className="mt-2">
+          <DetailSectionHeading>Result</DetailSectionHeading>
+          <p className="mt-1 whitespace-pre-wrap break-words text-xs text-foreground/90">
+            {agent.result}
+          </p>
+        </div>
+      ) : null}
+      {agent.error !== null ? (
+        <div className="mt-2">
+          <DetailSectionHeading destructive>Error</DetailSectionHeading>
+          <p className="mt-1 whitespace-pre-wrap break-words text-xs text-destructive-foreground">
+            {agent.error}
+          </p>
+        </div>
+      ) : null}
+      {hasHandles ? (
+        <div className="mt-2">
+          <DetailSectionHeading>Run handles</DetailSectionHeading>
+          <div className="mt-1 flex flex-col gap-0.5 font-mono text-[.68rem] text-muted-foreground/80">
+            {runHandles?.runId ? <span className="break-all">runId {runHandles.runId}</span> : null}
+            {runHandles?.scriptPath ? (
+              <span className="break-all">scriptPath {runHandles.scriptPath}</span>
+            ) : null}
+            {runHandles?.transcriptDir ? (
+              <span className="break-all">transcriptDir {runHandles.transcriptDir}</span>
+            ) : null}
+            {agent.outputFile ? (
+              <span className="break-all">outputFile {agent.outputFile}</span>
+            ) : null}
+            {runHandles?.sessionUrl ? (
+              <span className="break-all">sessionUrl {runHandles.sessionUrl}</span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type AgentToolActivityByAgent = Readonly<Record<string, ReadonlyArray<AgentToolActivityEntry>>>;
+
+/**
+ * Agent status row. The fixed three-line grid is shared by every row; only
+ * non-workflow rows (direct spawns and workflow members) wrap it in an
+ * expand button with detail below.
+ */
+function AgentRow({
+  agent,
+  toolActivity,
+}: {
+  agent: RuntimeSubagent;
+  toolActivity?: ReadonlyArray<AgentToolActivityEntry> | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const expandable = agent.kind !== "workflow";
+  const statusLabel = agentStatusLabel(agent);
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
   const role =
@@ -154,12 +352,23 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
 
-  return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
+  const gridClassName =
+    "grid h-[3.875rem] w-full grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1";
+  const content = (
+    <>
       <span className="col-start-1 row-start-1 flex items-center">
         <StatusDot status={agent.status} />
       </span>
       <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
+        {expandable ? (
+          <span className="self-center text-muted-foreground/70">
+            {open ? (
+              <ChevronDown aria-hidden className="size-3 shrink-0" />
+            ) : (
+              <ChevronRight aria-hidden className="size-3 shrink-0" />
+            )}
+          </span>
+        ) : null}
         <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
         {role ? (
           <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
@@ -187,6 +396,24 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
         {metadata.join(" · ")}
       </span>
       <span className="sr-only">{statusLabel}</span>
+    </>
+  );
+
+  if (!expandable) {
+    return <div className={gridClassName}>{content}</div>;
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className={cn(gridClassName, "text-left hover:bg-accent/40")}
+      >
+        {content}
+      </button>
+      {open ? <AgentDetail agent={agent} toolActivity={toolActivity} /> : null}
     </div>
   );
 }
@@ -318,9 +545,11 @@ function WorkflowScriptView({
 function PhaseSection({
   phase,
   defaultOpen = false,
+  agentToolActivity,
 }: {
   phase: AgentPanelWorkflowGroup["phases"][number];
   defaultOpen?: boolean;
+  agentToolActivity?: AgentToolActivityByAgent | undefined;
 }) {
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
   const previousState = useRef(phase.state);
@@ -369,7 +598,15 @@ function PhaseSection({
           </span>
         ) : null}
       </button>
-      {open ? phase.members.map((member) => <AgentRow key={member.id} agent={member} />) : null}
+      {open
+        ? phase.members.map((member) => (
+            <AgentRow
+              key={member.id}
+              agent={member}
+              toolActivity={agentToolActivity?.[member.id]}
+            />
+          ))
+        : null}
     </div>
   );
 }
@@ -380,11 +617,13 @@ function ExpandedWorkflowSection({
   environmentId,
   threadId,
   onCollapse,
+  agentToolActivity,
 }: {
   group: AgentPanelWorkflowGroup;
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
   onCollapse: () => void;
+  agentToolActivity?: AgentToolActivityByAgent | undefined;
 }) {
   const [scriptOpen, setScriptOpen] = useState(false);
   const members = workflowMembers(group);
@@ -439,10 +678,15 @@ function ExpandedWorkflowSection({
         />
       ) : null}
       {group.phases.map((phase) => (
-        <PhaseSection key={phase.index} phase={phase} defaultOpen={!workflowIsLive(group)} />
+        <PhaseSection
+          key={phase.index}
+          phase={phase}
+          defaultOpen={!workflowIsLive(group)}
+          agentToolActivity={agentToolActivity}
+        />
       ))}
       {group.unphasedMembers.map((member) => (
-        <AgentRow key={member.id} agent={member} />
+        <AgentRow key={member.id} agent={member} toolActivity={agentToolActivity?.[member.id]} />
       ))}
       {group.phases.length === 0 && group.unphasedMembers.length === 0 ? (
         <AgentRow agent={group.workflow} />
@@ -503,10 +747,12 @@ function WorkflowSection({
   group,
   environmentId,
   threadId,
+  agentToolActivity,
 }: {
   group: AgentPanelWorkflowGroup;
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
+  agentToolActivity?: AgentToolActivityByAgent | undefined;
 }) {
   const [open, setOpen] = useState(() => workflowIsLive(group));
   return open ? (
@@ -515,6 +761,7 @@ function WorkflowSection({
       environmentId={environmentId}
       threadId={threadId}
       onCollapse={() => setOpen(false)}
+      agentToolActivity={agentToolActivity}
     />
   ) : (
     <CollapsedWorkflowSection group={group} onExpand={() => setOpen(true)} />
@@ -525,10 +772,12 @@ export function AgentsPanel({
   model,
   environmentId = null,
   threadId = null,
+  agentToolActivity,
 }: {
   model: AgentPanelModel;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
+  agentToolActivity?: AgentToolActivityByAgent | undefined;
 }) {
   if (!model.hasAgents) {
     return (
@@ -553,6 +802,7 @@ export function AgentsPanel({
               group={group}
               environmentId={environmentId}
               threadId={threadId}
+              agentToolActivity={agentToolActivity}
             />
           ))}
           {model.directAgents.length > 0 ? (
@@ -561,7 +811,11 @@ export function AgentsPanel({
                 Direct spawns
               </div>
               {model.directAgents.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
+                <AgentRow
+                  key={agent.id}
+                  agent={agent}
+                  toolActivity={agentToolActivity?.[agent.id]}
+                />
               ))}
             </section>
           ) : null}

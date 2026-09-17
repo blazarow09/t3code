@@ -131,6 +131,7 @@ import {
   deriveTimelineEntriesWithState,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveAgentToolActivity,
   findLatestProposedPlan,
   deriveWorkLogEntries,
   hasActionableProposedPlan,
@@ -2925,6 +2926,12 @@ export default function ChatView(props: ChatViewProps) {
         agents: foldSubagentActivities(threadActivities, { sessionLive: agentSessionLive }),
       }),
     [agentSessionLive, threadActivities],
+  );
+  // Tool history per subagent: the rows the work log re-homes off the main
+  // timeline (payload.agentId), shown in the panel's expanded agent detail.
+  const agentToolActivity = useMemo(
+    () => deriveAgentToolActivity(threadActivities),
+    [threadActivities],
   );
   const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
     () => derivePendingRequests(threadActivities),
@@ -9671,6 +9678,7 @@ export default function ChatView(props: ChatViewProps) {
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
+        agentToolActivity={agentToolActivity}
       />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
