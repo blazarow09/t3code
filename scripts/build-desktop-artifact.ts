@@ -162,6 +162,9 @@ interface BuildCliInput {
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
   readonly wslRuntime: Option.Option<string>;
+  readonly appId: Option.Option<string>;
+  readonly productName: Option.Option<string>;
+  readonly disableUpdates: Option.Option<boolean>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -919,6 +922,9 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslRuntime: string | undefined;
+  readonly appId: string;
+  readonly productName: string;
+  readonly disableUpdates: boolean;
 }
 
 interface StagePackageJson {
@@ -1225,6 +1231,7 @@ function normalizePasskeyRpDomain(value: string): string {
 
 export function resolveMacPasskeySigningConfiguration(
   env: Readonly<Record<string, string | undefined>>,
+  appId: string = DESKTOP_APP_ID,
 ): MacPasskeySigningConfiguration {
   const teamId = env.T3CODE_APPLE_TEAM_ID?.trim().toUpperCase() ?? "";
   if (!APPLE_TEAM_ID_PATTERN.test(teamId)) {
@@ -1260,7 +1267,7 @@ export function resolveMacPasskeySigningConfiguration(
   }
 
   return {
-    appId: DESKTOP_APP_ID,
+    appId,
     teamId,
     rpDomains: uniqueRpDomains,
     provisioningProfilePath,
@@ -1553,6 +1560,11 @@ const BuildEnvConfig = Config.all({
   // by the build_linux_cli CI job. The Windows build embeds it verbatim as the
   // WSL runtime.
   wslRuntime: Config.String("T3CODE_DESKTOP_WSL_RUNTIME").pipe(Config.option),
+  // Branding overrides for side-by-side custom builds. Unset values keep the
+  // official appId/product name and the upstream update feed.
+  appId: Config.String("T3CODE_DESKTOP_APP_ID").pipe(Config.option),
+  productName: Config.String("T3CODE_DESKTOP_PRODUCT_NAME").pipe(Config.option),
+  disableUpdates: Config.Boolean("T3CODE_DESKTOP_DISABLE_UPDATES").pipe(Config.withDefault(false)),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1647,6 +1659,14 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const wslRuntime =
     Option.getOrUndefined(input.wslRuntime) ?? Option.getOrUndefined(env.wslRuntime);
 
+  const appId = mergeOptions(input.appId, env.appId, DESKTOP_APP_ID);
+  const productName = mergeOptions(
+    input.productName,
+    env.productName,
+    resolveDesktopProductName(version ?? serverPackageJson.version),
+  );
+  const disableUpdates = resolveBooleanFlag(input.disableUpdates, env.disableUpdates);
+
   return {
     platform,
     target,
@@ -1660,6 +1680,9 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslRuntime,
+    appId,
+    productName,
+    disableUpdates,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -2636,10 +2659,15 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  appId: string = DESKTOP_APP_ID,
+  productName: string = resolveDesktopProductName(version),
+  // Custom builds that ship without an update feed omit `publish`, so
+  // electron-builder never writes app-update.yml and auto-update self-disables.
+  disableUpdates = false,
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
+    appId,
+    productName,
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
@@ -2668,7 +2696,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
-  if (!isDesktopPreviewVersion(version)) {
+  if (!isDesktopPreviewVersion(version) && !disableUpdates) {
     const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
@@ -2714,7 +2742,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // Give the themed installer its own Finder volume name. Finder caches
       // DMG window backgrounds by volume name, so reusing a generic name can
       // make a newly built background look unchanged during testing.
-      title: `${resolveDesktopProductName(version)} ${version} Installer`,
+      title: `${productName} ${version} Installer`,
       background: `dmg/dmg-background-${updateChannel}.png`,
       window: {
         width: 640,
@@ -3587,7 +3615,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed
       ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
+          try: () =>
+            resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot }), options.appId),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
         })
       : undefined;
@@ -3659,6 +3688,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
+      options.appId,
+      options.productName,
+      options.disableUpdates,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -3818,7 +3850,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (options.platform === "win") {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
-      appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
+      appExecutableName: `${options.productName}.exe`,
       targetArch: options.arch,
       appVersion,
       expectWslRuntime: bundlesWslRuntime({
@@ -3911,6 +3943,22 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslRuntime: Flag.String("wsl-runtime").pipe(
     Flag.withDescription(
       "Path to the Linux CLI release archive (t3-<version>-linux-x64.tar.gz) to embed as the WSL runtime of a Windows build (env: T3CODE_DESKTOP_WSL_RUNTIME).",
+    ),
+    Flag.optional,
+  ),
+  appId: Flag.string("app-id").pipe(
+    Flag.withDescription("Electron appId for branded custom builds (env: T3CODE_DESKTOP_APP_ID)."),
+    Flag.optional,
+  ),
+  productName: Flag.string("product-name").pipe(
+    Flag.withDescription(
+      "Desktop product name for branded custom builds (env: T3CODE_DESKTOP_PRODUCT_NAME).",
+    ),
+    Flag.optional,
+  ),
+  disableUpdates: Flag.boolean("disable-updates").pipe(
+    Flag.withDescription(
+      "Omit the electron-builder publish config so no app-update.yml is generated (env: T3CODE_DESKTOP_DISABLE_UPDATES).",
     ),
     Flag.optional,
   ),

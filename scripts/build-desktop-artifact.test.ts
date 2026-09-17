@@ -2119,6 +2119,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
         wslRuntime: Option.none(),
+        appId: Option.none(),
+        productName: Option.none(),
+        disableUpdates: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -2159,6 +2162,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
             wslRuntime: Option.none(),
+            appId: Option.none(),
+            productName: Option.none(),
+            disableUpdates: Option.none(),
           }),
         );
 
@@ -2183,6 +2189,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
         wslRuntime: Option.none(),
+        appId: Option.none(),
+        productName: Option.none(),
+        disableUpdates: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(
@@ -2205,6 +2214,99 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.verbose, false);
       assert.equal(resolved.mockUpdates, false);
     }),
+  );
+
+  it.effect("keeps the upstream desktop identity when no branding overrides are set", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveBuildOptions({
+        platform: Option.some("win"),
+        target: Option.none(),
+        arch: Option.none(),
+        buildVersion: Option.some("0.0.17"),
+        outputDir: Option.none(),
+        skipBuild: Option.none(),
+        keepStage: Option.none(),
+        signed: Option.none(),
+        verbose: Option.none(),
+        mockUpdates: Option.none(),
+        mockUpdateServerPort: Option.none(),
+        wslRuntime: Option.none(),
+        appId: Option.none(),
+        productName: Option.none(),
+        disableUpdates: Option.none(),
+      }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))));
+
+      assert.equal(resolved.appId, "com.t3tools.t3code");
+      assert.equal(resolved.productName, "T3 Code (Alpha)");
+      assert.equal(resolved.disableUpdates, false);
+    }),
+  );
+
+  it.effect("honors desktop branding and update-feed overrides from env", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveBuildOptions({
+        platform: Option.some("win"),
+        target: Option.none(),
+        arch: Option.none(),
+        buildVersion: Option.some("0.1.0"),
+        outputDir: Option.none(),
+        skipBuild: Option.none(),
+        keepStage: Option.none(),
+        signed: Option.none(),
+        verbose: Option.none(),
+        mockUpdates: Option.none(),
+        mockUpdateServerPort: Option.none(),
+        wslRuntime: Option.none(),
+        appId: Option.none(),
+        productName: Option.none(),
+        disableUpdates: Option.none(),
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                T3CODE_DESKTOP_APP_ID: "com.t3tools.t3code.custom",
+                T3CODE_DESKTOP_PRODUCT_NAME: "T3 Code (Custom)",
+                T3CODE_DESKTOP_DISABLE_UPDATES: "true",
+              },
+            }),
+          ),
+        ),
+      );
+
+      assert.equal(resolved.appId, "com.t3tools.t3code.custom");
+      assert.equal(resolved.productName, "T3 Code (Custom)");
+      assert.equal(resolved.disableUpdates, true);
+    }),
+  );
+
+  it.effect("omits the publish config when desktop updates are disabled", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        "com.t3tools.t3code.custom",
+        "T3 Code (Custom)",
+        true,
+      );
+
+      assert.equal(config.appId, "com.t3tools.t3code.custom");
+      assert.equal(config.productName, "T3 Code (Custom)");
+      assert.notProperty(config, "publish");
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
   );
 });
 
