@@ -53,6 +53,7 @@ import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  isCustomSyncUpdateAvailable,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
@@ -395,6 +396,7 @@ function AboutVersionSection() {
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
   const buttonTooltip = updateState ? getDesktopUpdateButtonTooltip(updateState) : null;
+  const customSyncUpdate = isCustomSyncUpdateAvailable(updateState);
   const buttonDisabled =
     action === "none"
       ? !canCheckForUpdate(updateState)
@@ -406,10 +408,12 @@ function AboutVersionSection() {
     downloading: "Downloading…",
     "up-to-date": "Up to Date",
   };
-  const buttonLabel =
-    actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
-  const description =
-    action === "download" || action === "install"
+  const buttonLabel = customSyncUpdate
+    ? "Update available"
+    : (actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates");
+  const description = customSyncUpdate
+    ? `Upstream is ${updateState?.syncBehind ?? 0} commits ahead. Rebuild the custom installer to update.`
+    : action === "download" || action === "install"
       ? "Update available."
       : "Current version of the application.";
 
@@ -424,7 +428,7 @@ function AboutVersionSection() {
               render={
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant={customSyncUpdate ? "default" : "outline"}
                   disabled={buttonDisabled || isUpdateActionPending}
                   onClick={handleButtonClick}
                 >

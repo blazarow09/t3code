@@ -373,6 +373,10 @@ export interface DesktopUpdateState {
   message: string | null;
   errorContext: "check" | "download" | "install" | null;
   canRetry: boolean;
+  /** Custom fork only: drift is measured against a local checkout, not a feed. */
+  customSync?: boolean;
+  /** Custom fork only: commits `upstream/main` has that this build does not. */
+  syncBehind?: number;
 }
 
 export interface DesktopUpdateReleaseNote {
@@ -404,6 +408,8 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   message: Schema.NullOr(Schema.String),
   errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
   canRetry: Schema.Boolean,
+  customSync: Schema.optional(Schema.Boolean),
+  syncBehind: Schema.optional(Schema.Number),
 });
 
 export interface DesktopUpdateActionResult {

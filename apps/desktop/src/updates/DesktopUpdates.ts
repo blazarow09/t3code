@@ -6,6 +6,8 @@ import {
   type DesktopUpdateCheckResult,
   type DesktopUpdateState,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -31,6 +33,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import { probeCustomSync, readCustomSyncConfig, type CustomSyncProbe } from "./customSyncStatus.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
@@ -48,6 +51,8 @@ import {
 
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
+// Custom fork: upstream drift moves slowly, so hourly is plenty.
+const CUSTOM_SYNC_POLL_INTERVAL = "1 hour";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
@@ -320,6 +325,41 @@ export const make = Effect.gen(function* () {
         return setState(nextState).pipe(Effect.as(nextState));
       }),
     );
+
+  // Custom fork: a branded build ships no update feed, so drift is measured
+  // against the checkout the installer was built from. Absent config (stock
+  // builds) disables the path. Never fails: a missing checkout or a dead
+  // network just keeps the last known state.
+  const refreshCustomSync = Effect.gen(function* () {
+    const config = yield* readCustomSyncConfig(environment.stateDir);
+    if (Option.isNone(config)) {
+      return false;
+    }
+
+    const probe = yield* probeCustomSync(config.value).pipe(
+      Effect.orElseSucceed(() => Option.none<CustomSyncProbe>()),
+    );
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+
+    if (Option.isNone(probe)) {
+      yield* updateState((state) => ({ ...state, customSync: true, checkedAt }));
+      return true;
+    }
+
+    const behind = probe.value.behind;
+    yield* updateState((state) => ({
+      ...state,
+      customSync: true,
+      enabled: true,
+      status: behind > 0 ? "available" : "up-to-date",
+      syncBehind: behind,
+      availableVersion: null,
+      message: null,
+      checkedAt,
+      canRetry: false,
+    }));
+    return true;
+  }).pipe(Effect.provide(NodeServices.layer), Effect.withSpan("desktop.updates.refreshCustomSync"));
 
   const readAppUpdateYml = fileSystem.readFileString(environment.appUpdateYmlPath, "utf-8").pipe(
     Effect.option,
@@ -687,6 +727,10 @@ export const make = Effect.gen(function* () {
       }),
       Effect.forkScoped,
     );
+    yield* Effect.gen(function* () {
+      yield* refreshCustomSync;
+      yield* Effect.sleep(CUSTOM_SYNC_POLL_INTERVAL);
+    }).pipe(Effect.forever, Effect.forkScoped);
   }).pipe(Effect.withSpan("desktop.updates.startPollers"));
 
   const handleUpdateAvailable = Effect.fn("desktop.updates.handleUpdateAvailable")(function* (
@@ -968,8 +1012,10 @@ export const make = Effect.gen(function* () {
     check: Effect.fn("desktop.updates.check")(function* (reason: string) {
       yield* Effect.annotateCurrentSpan({ reason });
       if (!(yield* Ref.get(updaterConfiguredRef))) {
+        // Custom fork: no feed means the button drives the local drift check.
+        const checked = yield* refreshCustomSync;
         return {
-          checked: false,
+          checked,
           state: yield* Ref.get(updateStateRef),
         };
       }

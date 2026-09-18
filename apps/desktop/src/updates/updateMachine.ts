@@ -106,7 +106,9 @@ export function reduceDesktopUpdateStateOnUpdateAvailable(
     checkedAt,
     message: null,
     errorContext: null,
-    canRetry: isDownloadedVersion,
+    canRetry: false,
+    customSync: false,
+    syncBehind: 0,
   };
 }
 
