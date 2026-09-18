@@ -3452,9 +3452,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     // "memory allocation of N bytes failed". One at a time is slower but works.
     const spawnCommand = yield* resolveSpawnCommand("vp", [
       "run",
-      "build:desktop",
       "--concurrency-limit",
       "1",
+      "build:desktop",
     ]);
     yield* runCommand(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
