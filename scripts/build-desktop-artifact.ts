@@ -3959,17 +3959,17 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     ),
     Flag.optional,
   ),
-  appId: Flag.string("app-id").pipe(
+  appId: Flag.String("app-id").pipe(
     Flag.withDescription("Electron appId for branded custom builds (env: T3CODE_DESKTOP_APP_ID)."),
     Flag.optional,
   ),
-  productName: Flag.string("product-name").pipe(
+  productName: Flag.String("product-name").pipe(
     Flag.withDescription(
       "Desktop product name for branded custom builds (env: T3CODE_DESKTOP_PRODUCT_NAME).",
     ),
     Flag.optional,
   ),
-  disableUpdates: Flag.boolean("disable-updates").pipe(
+  disableUpdates: Flag.Boolean("disable-updates").pipe(
     Flag.withDescription(
       "Omit the electron-builder publish config so no app-update.yml is generated (env: T3CODE_DESKTOP_DISABLE_UPDATES).",
     ),
