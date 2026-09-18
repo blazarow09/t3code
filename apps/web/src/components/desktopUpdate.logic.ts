@@ -41,9 +41,22 @@ export function getDesktopUpdateReleaseHistoryUrl(
   return desktopReleaseRepositoryUrl(repository);
 }
 
+/**
+ * Custom fork: upstream drifted past the checkout this build came from. There is
+ * no feed to download from, so this only ever drives the button's presentation.
+ */
+export function isCustomSyncUpdateAvailable(state: DesktopUpdateState | null): boolean {
+  return state?.customSync === true && (state.syncBehind ?? 0) > 0;
+}
+
 export function resolveDesktopUpdateButtonAction(
   state: DesktopUpdateState,
 ): DesktopUpdateButtonAction {
+  // A custom build must never hand off to the update feed: the stock installer
+  // would overwrite it. The button re-runs the local drift check instead.
+  if (state.customSync) {
+    return "none";
+  }
   if (
     state.downloadedVersion &&
     (state.status === "downloaded" ||
@@ -87,6 +100,13 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
 }
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
+  if (state.customSync) {
+    const behind = state.syncBehind ?? 0;
+    if (behind > 0) {
+      return `Upstream is ${behind} commit${behind === 1 ? "" : "s"} ahead of this build`;
+    }
+    return state.checkedAt ? "This build matches upstream" : "Checking upstream…";
+  }
   if (
     state.notAppliedVersion !== undefined &&
     (state.status === "available" || state.status === "downloaded") &&
