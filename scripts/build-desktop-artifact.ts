@@ -1828,7 +1828,11 @@ function windowsVswherePrerequisiteScript(arch: typeof BuildArch.Type): string {
     "if (!(Test-Path $vswhere)) { exit 1 }",
     `$install = & $vswhere -latest -products * -requires ${toolComponents.join(" ")} -property installationPath`,
     "if (!$install) { exit 1 }",
+    // The SDK writes KitsRoot10 into both registry views, and on some machines
+    // the 64-bit view points at a stub directory with no Lib. Fall back to the
+    // 32-bit view, where the real SDK tree lives, before giving up.
     "$kitsRoot = Get-ItemPropertyValue 'HKLM:\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots' -Name KitsRoot10 -ErrorAction SilentlyContinue",
+    "if (!$kitsRoot -or !(Test-Path (Join-Path $kitsRoot 'Lib'))) { $kitsRoot = Get-ItemPropertyValue 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows Kits\\Installed Roots' -Name KitsRoot10 -ErrorAction SilentlyContinue }",
     "if (!$kitsRoot -or !(Test-Path (Join-Path $kitsRoot 'Lib'))) { exit 1 }",
     "$msvcToolset = Get-ChildItem (Join-Path $install 'VC\\Tools\\MSVC') -Directory | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1",
     "if (!$msvcToolset) { exit 1 }",
@@ -3442,7 +3446,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
-    const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
+    // Serialize the inner workspace build. Web, desktop and server each run a
+    // rolldown/babel transform, and vp's default concurrency of 4 builds them
+    // all at once, which exceeds available memory and fails mid-transform with
+    // "memory allocation of N bytes failed". One at a time is slower but works.
+    const spawnCommand = yield* resolveSpawnCommand("vp", [
+      "run",
+      "build:desktop",
+      "--concurrency-limit",
+      "1",
+    ]);
     yield* runCommand(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: repoRoot,
