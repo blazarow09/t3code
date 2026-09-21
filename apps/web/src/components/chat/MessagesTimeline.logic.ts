@@ -296,6 +296,18 @@ export function resolveWorkGroupScrollIndex(
   return index < 0 ? undefined : { index, viewOffset: -anchor.offset };
 }
 
+/**
+ * A saved offset wins. With nothing to restore, the group opens on the latest
+ * call — the end of the list the reader just expanded.
+ */
+export function resolveWorkGroupInitialPlacement(
+  entries: ReadonlyArray<{ readonly id: string }>,
+  anchor: WorkGroupScrollAnchor | undefined,
+): { readonly index: number; readonly viewOffset: number } | "end" {
+  return resolveWorkGroupScrollIndex(entries, anchor) ?? "end";
+}
+
+/** Only newly appended calls may follow the end, never status or output updates. */
 export function shouldFollowWorkGroupAppend(
   previous: ReadonlyArray<{ readonly id: string }>,
   entries: ReadonlyArray<{ readonly id: string }>,
