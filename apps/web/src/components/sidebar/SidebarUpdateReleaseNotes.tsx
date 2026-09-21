@@ -43,15 +43,85 @@ function ReleaseLink({
   );
 }
 
+function CustomSyncSummary({
+  onStartSync,
+  state,
+  syncPending,
+}: {
+  readonly onStartSync: (() => void) | undefined;
+  readonly state: DesktopUpdateState;
+  readonly syncPending: boolean;
+}) {
+  const behind = state.syncBehind ?? 0;
+  const note = state.releaseNotes[0];
+  const omitted = state.omittedReleaseCount;
+
+  return (
+    <div className="flex max-h-[calc(var(--available-height)-0.5rem)] min-h-0 w-fit max-w-[min(24rem,calc(100vw-2rem))] flex-col text-left">
+      <div className="shrink-0 px-1">
+        <div className="whitespace-nowrap text-sm leading-5 font-medium">
+          {behind > 0
+            ? `Upstream is ${behind} commit${behind === 1 ? "" : "s"} ahead`
+            : "This build matches upstream"}
+        </div>
+        <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
+          For reference. This check does not install anything.
+        </div>
+        <button
+          type="button"
+          className="mt-3 inline-flex h-7 items-center justify-center rounded-md border border-border bg-secondary px-2.5 text-xs font-medium text-secondary-foreground outline-none hover:bg-secondary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={syncPending || onStartSync === undefined}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onStartSync?.();
+          }}
+        >
+          {syncPending ? "Starting…" : "Sync and build"}
+        </button>
+        <div className="mt-1.5 text-xs leading-4 text-muted-foreground">
+          Starts a new chat on DeepSeek V4.1 Flash. It builds an installer and does not install it.
+        </div>
+      </div>
+      {note && note.items.length > 0 ? (
+        <div className="min-h-0 max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
+          <section>
+            <h3 className="text-foreground text-xs leading-4 font-semibold">What's changed</h3>
+            <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
+              {keyReleaseNoteItems(note.items).map(({ item, key }) => (
+                <li className="list-disc break-words" key={key}>
+                  {item}
+                </li>
+              ))}
+            </ul>
+            {omitted > 0 ? (
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                {`${omitted} older ${omitted === 1 ? "commit" : "commits"}`}
+              </p>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function SidebarUpdateReleaseNotes({
+  onStartSync,
   shell,
   state,
+  syncPending = false,
   tooltip,
 }: {
+  readonly onStartSync?: (() => void) | undefined;
   readonly shell: DesktopUpdateShell | undefined;
   readonly state: DesktopUpdateState;
+  readonly syncPending?: boolean;
   readonly tooltip: string;
 }) {
+  if (state.customSync) {
+    return CustomSyncSummary({ onStartSync, state, syncPending });
+  }
   if (state.channel !== "nightly" || state.releaseNotes.length === 0) {
     return <>{tooltip}</>;
   }

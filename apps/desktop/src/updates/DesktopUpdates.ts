@@ -393,36 +393,100 @@ export const make = Effect.gen(function* () {
   // against the checkout the installer was built from. Absent config (stock
   // builds) disables the path. Never fails: a missing checkout or a dead
   // network just keeps the last known state.
-  const refreshCustomSync = Effect.gen(function* () {
-    const config = yield* readCustomSyncConfig(environment.stateDir);
-    if (Option.isNone(config)) {
-      return false;
-    }
+  //
+  // Status stays off "available". That word is the download signal for the
+  // stock installer, which would replace this build. The commit list is the
+  // whole result.
+  const refreshCustomSync = (announce: boolean) =>
+    Effect.gen(function* () {
+      const config = yield* readCustomSyncConfig(environment.stateDir);
+      if (Option.isNone(config)) {
+        return false;
+      }
 
-    const probe = yield* probeCustomSync(config.value).pipe(
-      Effect.orElseSucceed(() => Option.none<CustomSyncProbe>()),
-    );
-    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+      if (announce) {
+        const startedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* updateState((state) => ({
+          ...state,
+          customSync: true,
+          enabled: true,
+          status: "checking",
+          checkedAt: startedAt,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        }));
+      }
 
-    if (Option.isNone(probe)) {
-      yield* updateState((state) => ({ ...state, customSync: true, checkedAt }));
+      const probe = yield* probeCustomSync(config.value).pipe(
+        Effect.orElseSucceed(() => Option.none<CustomSyncProbe>()),
+      );
+      const checkedAt = DateTime.formatIso(yield* DateTime.now);
+
+      if (Option.isNone(probe)) {
+        yield* updateState((state) => ({
+          ...state,
+          customSync: true,
+          enabled: true,
+          status: "error",
+          message: "Could not read upstream commits.",
+          errorContext: "check",
+          canRetry: true,
+          checkedAt,
+        }));
+        return true;
+      }
+
+      const { behind, commits, upstreamTip } = probe.value;
+      yield* updateState((state) => ({
+        ...state,
+        customSync: true,
+        enabled: true,
+        // Not "available": that status asks the app to download a stock build.
+        status: "up-to-date",
+        syncBehind: behind,
+        availableVersion: null,
+        releaseNotes:
+          commits.length === 0
+            ? []
+            : [
+                {
+                  version: upstreamTip ?? "upstream",
+                  items: commits.map((commit) => `${commit.sha} ${commit.subject}`),
+                  totalItems: commits.length,
+                },
+              ],
+        omittedReleaseCount: Math.max(0, behind - commits.length),
+        message: null,
+        errorContext: null,
+        canRetry: false,
+        checkedAt,
+      }));
       return true;
-    }
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.withSpan("desktop.updates.refreshCustomSync"),
+    );
 
-    const behind = probe.value.behind;
+  const customSyncPoller: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
+    const config = yield* readCustomSyncConfig(environment.stateDir).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    if (Option.isNone(config)) return;
+
+    // The stock updater never starts, which left this button disabled. Arm it
+    // before the first fetch so a click can ask upstream immediately.
     yield* updateState((state) => ({
       ...state,
       customSync: true,
       enabled: true,
-      status: behind > 0 ? "available" : "up-to-date",
-      syncBehind: behind,
-      availableVersion: null,
-      message: null,
-      checkedAt,
-      canRetry: false,
+      status: state.status === "disabled" ? "idle" : state.status,
     }));
-    return true;
-  }).pipe(Effect.provide(NodeServices.layer), Effect.withSpan("desktop.updates.refreshCustomSync"));
+    yield* Effect.gen(function* () {
+      yield* refreshCustomSync(false);
+      yield* Effect.sleep(CUSTOM_SYNC_POLL_INTERVAL);
+    }).pipe(Effect.forever, Effect.forkScoped);
+  }).pipe(Effect.withSpan("desktop.updates.customSyncPoller"));
 
   const readAppUpdateYml = fileSystem.readFileString(environment.appUpdateYmlPath, "utf-8").pipe(
     Effect.option,
@@ -881,7 +945,7 @@ export const make = Effect.gen(function* () {
       Effect.forkScoped,
     );
     yield* Effect.gen(function* () {
-      yield* refreshCustomSync;
+      yield* refreshCustomSync(false);
       yield* Effect.sleep(CUSTOM_SYNC_POLL_INTERVAL);
     }).pipe(Effect.forever, Effect.forkScoped);
   }).pipe(Effect.withSpan("desktop.updates.startPollers"));
@@ -1092,6 +1156,7 @@ export const make = Effect.gen(function* () {
       const disabledReason = yield* resolveDisabledReason;
       yield* setState(yield* baseUpdateState(settings.updateChannel, disabledReason));
       if (Option.isSome(disabledReason)) {
+        yield* customSyncPoller;
         return;
       }
       yield* Ref.set(updaterConfiguredRef, true);
@@ -1180,7 +1245,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ reason });
       if (!(yield* Ref.get(updaterConfiguredRef))) {
         // Custom fork: no feed means the button drives the local drift check.
-        const checked = yield* refreshCustomSync;
+        const checked = yield* refreshCustomSync(true);
         return {
           checked,
           state: yield* Ref.get(updateStateRef),

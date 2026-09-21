@@ -43,6 +43,7 @@ import {
   useUpdateEverythingRun,
 } from "./updateEverythingRun";
 import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
+import { useStartCustomSyncThread } from "./useStartCustomSyncThread";
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
@@ -53,7 +54,22 @@ function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
   state: DesktopUpdateState | null,
 ): boolean {
-  return showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0;
+  if (!state || state.status === "checking" || state.releaseNotes.length === 0) return false;
+  // Custom builds have no installer to download. The same notes popover lists
+  // the upstream commits instead.
+  if (state.customSync) return true;
+  return showUpdateDetails && state.channel === "nightly";
+}
+
+/** A finished custom-sync check, including one that found nothing to list. */
+export function shouldShowCustomSyncCheckResult(state: DesktopUpdateState | null): boolean {
+  return (
+    state?.customSync === true &&
+    state.checkedAt !== null &&
+    state.status !== "checking" &&
+    state.status !== "error" &&
+    state.status !== "disabled"
+  );
 }
 
 function handleSidebarUpdateReleaseNotesPopoverOpenChange(
@@ -191,11 +207,14 @@ export function SidebarUpdatePill() {
 
 function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
+  const customSyncThread = useStartCustomSyncThread();
   const [isActionPending, setIsActionPending] = useState(false);
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
+  const [summaryRequest, setSummaryRequest] = useState(0);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
+  const openedSummaryRequest = useRef(0);
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -239,7 +258,7 @@ function SidebarUpdateControl() {
   });
   const idleTooltip =
     !showUpdateDetails && !showCheckIcon ? getDesktopUpdateIdleTooltip(state) : null;
-  const tooltip = runsEverything
+  const tooltip = state?.customSync ? getDesktopUpdateButtonTooltip(state) : runsEverything
     ? everything.summary
     : showUpdateDetails
       ? state
@@ -258,6 +277,8 @@ function SidebarUpdateControl() {
   const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
   const showReleaseNotesPopover =
     !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
+  const showCustomSyncResult = !isRunningEverything && shouldShowCustomSyncCheckResult(state);
+  const showSummaryPopover = showReleaseNotesPopover || showCustomSyncResult;
 
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [releaseNotesTriggerFocusVisible, setReleaseNotesTriggerFocusVisible] = useState(false);
@@ -320,7 +341,11 @@ function SidebarUpdateControl() {
     void bridge
       .checkForUpdate()
       .then((result) => {
-        if (result.checked) return;
+        if (result.state.customSync && result.state.status !== "error") {
+          setSummaryRequest((request) => request + 1);
+          return;
+        }
+        if (result.checked && result.state.status !== "error") return;
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -493,7 +518,7 @@ function SidebarUpdateControl() {
         open={releaseNotesOpen && showReleaseNotesPopover}
         triggerId={releaseNotesTriggerId}
         onOpenChange={(open, details) => {
-          if (open && !showReleaseNotesPopover) {
+          if (open && !showSummaryPopover) {
             details.cancel();
             return;
           }
@@ -506,7 +531,7 @@ function SidebarUpdateControl() {
             id={releaseNotesTriggerId}
             render={
               <PopoverTrigger
-                {...(!showReleaseNotesPopover
+                {...(!showSummaryPopover
                   ? {
                       "aria-controls": undefined,
                       "aria-expanded": undefined,
@@ -538,10 +563,11 @@ function SidebarUpdateControl() {
             </TooltipPopup>
           ) : null}
         </Tooltip>
-        {showReleaseNotesPopover && state ? (
+        {showSummaryPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Nightly update release notes"
+            aria-label={state.customSync ? "Upstream commits" : "Nightly update release notes"}
+            className="max-w-none text-balance shadow-xl shadow-black/25"
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (
@@ -556,8 +582,14 @@ function SidebarUpdateControl() {
             tooltipStyle
           >
             <SidebarUpdateReleaseNotes
+              onStartSync={() => {
+                void customSyncThread.start().then((started) => {
+                  if (started) releaseNotesPopoverHandle.close();
+                });
+              }}
               shell={window.desktopBridge}
               state={state}
+              syncPending={customSyncThread.pending}
               tooltip={tooltip}
             />
           </PopoverPopup>

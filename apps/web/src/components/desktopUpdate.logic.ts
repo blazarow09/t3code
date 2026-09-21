@@ -105,7 +105,7 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     if (behind > 0) {
       return `Upstream is ${behind} commit${behind === 1 ? "" : "s"} ahead of this build`;
     }
-    return state.checkedAt ? "This build matches upstream" : "Checking upstream…";
+    return state.checkedAt ? "This build matches upstream" : "Check for upstream changes";
   }
   if (
     state.notAppliedVersion !== undefined &&
