@@ -86,17 +86,20 @@ it.effect("always grants pull-requests and gates browser and device access indep
       "orchestration",
       "preview",
       "pull-requests",
+      "threads",
       "worktree",
     ]);
     expect(yield* capabilitiesOf(withoutPreview)).toEqual([
       "orchestration",
       "pull-requests",
+      "threads",
       "worktree",
     ]);
     expect(yield* capabilitiesOf(withDevice)).toEqual([
       "device",
       "orchestration",
       "pull-requests",
+      "threads",
       "worktree",
     ]);
   }),

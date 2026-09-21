@@ -34,6 +34,8 @@ import {
 import {
   type ComposerContextReference,
   producerIdFromComposerContextId,
+  toComposerContextId,
+  toKindScopedComposerContextId,
 } from "./composerContextReferences";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
 import type { AttachmentUploadState } from "./attachmentUploadState";
@@ -191,6 +193,52 @@ export function terminalContextRecord(context: TerminalContextDraft): TerminalCo
   };
 }
 
+/**
+ * A thread reference keeps the thread's own id as its context id, so the reference round-trips
+ * through the prompt with no side table. Anything the id pattern cannot carry is not
+ * representable as a reference; `threadReferenceIsRepresentable` is the gate for that.
+ */
+export function threadContextId(threadId: ThreadId): ComposerContextId {
+  return threadId as unknown as ComposerContextId;
+}
+
+export function threadReferenceIsRepresentable(threadId: string): boolean {
+  return toComposerContextId(threadId) === threadId;
+}
+
+export function threadContextReference(input: {
+  threadId: ThreadId;
+  title: string;
+}): ComposerContextReference {
+  return {
+    kind: "thread",
+    contextId: threadContextId(input.threadId),
+    label: input.title,
+  };
+}
+
+/**
+ * Rebuilds the records behind every thread reference in a prompt. Thread references carry no
+ * draft state: the id is in the link and the title is its label, so the send boundary derives
+ * them from the text it is sending.
+ */
+export function threadContextRecordsFromPrompt(prompt: string): ThreadContextRecord[] {
+  const records = new Map<string, ThreadContextRecord>();
+  for (const occurrence of collectComposerContextReferences(prompt)) {
+    if (occurrence.kind !== "thread" || records.has(occurrence.contextId)) continue;
+    const title = sanitizeComposerContextLabel(occurrence.label, "thread");
+    records.set(occurrence.contextId, {
+      version: 1,
+      contextId: occurrence.contextId,
+      kind: "thread",
+      label: title,
+      threadId: occurrence.contextId,
+      title,
+    });
+  }
+  return [...records.values()];
+}
+
 export function reviewCommentContextRecord(
   comment: ReviewCommentContext,
 ): ReviewCommentContextRecord {
@@ -319,6 +367,8 @@ export function buildMessageContext(input: {
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
+  /** The prompt being sent; thread references are read straight out of it. */
+  prompt?: string | undefined;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
     (input.attachments ?? []).flatMap(({ attachment }) =>
@@ -337,6 +387,13 @@ export function buildMessageContext(input: {
     ),
     ...(input.attachments ?? []).map(attachmentContextRecord),
   ];
+  // Thread references have no draft record to collect from; the link is the record.
+  const claimed = new Set(records.map((record) => record.contextId));
+  for (const record of threadContextRecordsFromPrompt(input.prompt ?? "")) {
+    if (claimed.has(record.contextId)) continue;
+    claimed.add(record.contextId);
+    records.push(record);
+  }
   return records.length === 0 ? undefined : { version: 1, records };
 }
 

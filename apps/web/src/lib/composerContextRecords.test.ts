@@ -29,6 +29,9 @@ import {
   terminalContextRecord,
   terminalContextReference,
   terminalContextDraftFromRecord,
+  threadContextRecordsFromPrompt,
+  threadContextReference,
+  threadReferenceIsRepresentable,
   uploadedAttachmentContextRecord,
 } from "./composerContextRecords";
 
@@ -381,7 +384,7 @@ describe("pullRequestContextKindLabel", () => {
 describe("producer ids that do not fit the grammar", () => {
   it("folds review comment ids and keeps the raw id in the draft shape", () => {
     const record = reviewCommentContextRecord({
-      id: "pull-request-finding:42",
+      id: "pull-request-finding/42",
       sectionId: "s",
       sectionTitle: "t",
       filePath: "a/b.ts",
@@ -398,6 +401,22 @@ describe("producer ids that do not fit the grammar", () => {
         context: { version: 1, records: [record] },
       }).recordsById.has(record.contextId),
     ).toBe(true);
+  });
+
+  it("keeps a colonated producer id verbatim, so thread ids survive their own reference", () => {
+    const record = reviewCommentContextRecord({
+      id: "import:codex:abc-123",
+      sectionId: "s",
+      sectionTitle: "t",
+      filePath: "a/b.ts",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "L1",
+      text: "",
+      diff: "",
+    });
+    expect(record.contextId).toBe("review-comment_import:codex:abc-123");
+    expect(threadReferenceIsRepresentable("import:codex:abc-123")).toBe(true);
   });
 });
 
@@ -438,5 +457,66 @@ describe("selectedMessageContextFragment", () => {
 
     expect(fragment).toContain(review.contextId);
     expect(fragment).not.toContain(terminal.contextId);
+  });
+});
+
+describe("thread references", () => {
+  it("uses the thread id as the context id so the link needs no side table", () => {
+    const reference = threadContextReference({
+      threadId: ThreadId.make("import:codex:abc-123"),
+      title: "Fix the flaky checkout test",
+    });
+
+    expect(reference.contextId).toBe("import:codex:abc-123");
+    expect(threadReferenceIsRepresentable("import:codex:abc-123")).toBe(true);
+  });
+
+  it("refuses ids the context id pattern cannot carry", () => {
+    expect(threadReferenceIsRepresentable("thread/with/slashes")).toBe(false);
+    expect(threadReferenceIsRepresentable("has space")).toBe(false);
+  });
+
+  it("derives one wire record per referenced thread, titled from the label", () => {
+    const link = formatInlineContextReference(
+      threadContextReference({
+        threadId: ThreadId.make("thr_1"),
+        title: "Fix the flaky checkout test",
+      }),
+    );
+    const records = threadContextRecordsFromPrompt(`look at ${link} and ${link} again`);
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      kind: "thread",
+      contextId: "thr_1",
+      threadId: "thr_1",
+      title: "Fix the flaky checkout test",
+    });
+  });
+
+  it("rides the message context built at the send boundary", () => {
+    const context = buildMessageContext({
+      terminalContexts: [],
+      reviewComments: [],
+      previewAnnotations: [],
+      prompt: formatInlineContextReference(
+        threadContextReference({ threadId: ThreadId.make("thr_2"), title: "Other chat" }),
+      ),
+    });
+
+    expect(context).toBeDefined();
+    expect(decodeMessageContext(context)).toEqual(context);
+    expect(context?.records.map((record) => record.kind)).toEqual(["thread"]);
+  });
+
+  it("sends nothing for a prompt with no thread reference", () => {
+    expect(
+      buildMessageContext({
+        terminalContexts: [],
+        reviewComments: [],
+        previewAnnotations: [],
+        prompt: "just prose",
+      }),
+    ).toBeUndefined();
   });
 });

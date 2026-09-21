@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
+import { MessageCircleIcon, MessagesSquareIcon, MousePointerClickIcon } from "lucide-react";
 import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -368,6 +368,31 @@ function UnresolvedContextChip(props: { label: string }) {
   );
 }
 
+/**
+ * A conversation reference carries no draft record — the id is inside the link and the title is
+ * its label — so this renders from the label alone rather than waiting on a lookup.
+ */
+function ThreadContextChip(props: { label: string }) {
+  return (
+    <ContextChip
+      icon={
+        <MessagesSquareIcon
+          className={cn(
+            COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+            CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES.thread,
+            "size-3.5",
+          )}
+        />
+      }
+      label={props.label}
+      kindLabel="Conversation"
+      details="Referenced conversation. Its context is read on demand, not inlined."
+      detailsMode="tooltip"
+      toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.thread}
+    />
+  );
+}
+
 interface ComposerContextRenderContext {
   label: string;
 }
@@ -492,7 +517,12 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
         ),
     },
   ],
-  fallback: (_kind, _entry, context) => <UnresolvedContextChip label={context.label} />,
+  fallback: (kind, _entry, context) =>
+    kind === "thread" ? (
+      <ThreadContextChip label={context.label} />
+    ) : (
+      <UnresolvedContextChip label={context.label} />
+    ),
 });
 
 export function ComposerContextReferenceChip(props: {
