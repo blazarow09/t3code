@@ -40,6 +40,22 @@ const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   ".sqlite-maintenance.lock",
 ]);
 
+/**
+ * SQLite derives its WAL sidecar paths from the filename it is handed, so a
+ * shadow home that shares a database through a symlink still grows real
+ * `-shm`/`-wal` files of its own. They are per-connection runtime state, not
+ * user configuration: leave them and one database ends up with two write-ahead
+ * logs, so replace them with the shared copies like any other runtime entry.
+ */
+const REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN = /\.sqlite-(?:shm|wal|journal)$/u;
+
+function isReplaceableSharedRuntimeEntry(entryName: string): boolean {
+  return (
+    REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(entryName) ||
+    REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN.test(entryName)
+  );
+}
+
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {
   const expanded =
     value && value.trim().length > 0 ? expandHomePath(value, home) : path.join(home, ".codex");
@@ -249,7 +265,7 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   );
 
   if (state._tag === "NotSymlink") {
-    if (!REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(input.entryName)) {
+    if (!isReplaceableSharedRuntimeEntry(input.entryName)) {
       return yield* new CodexShadowHomeEntryConflictError({
         sharedHomePath: input.sharedHomePath,
         effectiveHomePath: input.effectiveHomePath,
