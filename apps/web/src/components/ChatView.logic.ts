@@ -487,10 +487,30 @@ export function buildLocalDraftThread(
 export function resolveComposerProviderSelection(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
   candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
+  /**
+   * A picker choice made in this visit. It is not restored from disk, so a
+   * restart cannot keep a thread on the wrong account, but the user can still
+   * switch accounts that share resume state.
+   */
+  overrideInstanceId?: ProviderInstanceId | null;
   lockedProvider: ProviderDriverKind | null;
   lockedInstanceId: ProviderInstanceId | null | undefined;
 }) {
-  const requestedInstanceId = input.candidateInstanceIds.find(
+  // A started thread opens on the instance that owns it. A restored composer
+  // draft, or the first sibling that becomes ready after a restart, must not
+  // replace that account. A live picker choice still can.
+  const pinnedInstanceId = input.lockedProvider != null ? (input.lockedInstanceId ?? null) : null;
+  const overrideInstanceId = input.overrideInstanceId ?? null;
+  const orderedCandidateInstanceIds = [
+    ...(overrideInstanceId != null ? [overrideInstanceId] : []),
+    ...(pinnedInstanceId != null && pinnedInstanceId !== overrideInstanceId
+      ? [pinnedInstanceId]
+      : []),
+    ...input.candidateInstanceIds.filter(
+      (candidate) => candidate !== overrideInstanceId && candidate !== pinnedInstanceId,
+    ),
+  ];
+  const requestedInstanceId = orderedCandidateInstanceIds.find(
     (candidate) => candidate != null && candidate !== NO_PROVIDER_MODEL_SELECTION.instanceId,
   );
   const requestedDriverKind =
@@ -513,19 +533,31 @@ export function resolveComposerProviderSelection(input: {
       (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey) &&
       (!requiresExactInstance || entry.instanceId === input.lockedInstanceId),
   );
+  const selectedFromCandidates = orderedCandidateInstanceIds
+    .map((candidate) =>
+      compatibleEntries.find(
+        (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
+      ),
+    )
+    .find((entry) => entry !== undefined);
+  const overrideSelection =
+    overrideInstanceId != null && selectedFromCandidates?.instanceId === overrideInstanceId
+      ? selectedFromCandidates
+      : undefined;
+  const pinnedSelection =
+    pinnedInstanceId != null && selectedFromCandidates?.instanceId === pinnedInstanceId
+      ? selectedFromCandidates
+      : undefined;
   const selectedProviderEntry =
-    input.candidateInstanceIds
-      .map((candidate) =>
-        compatibleEntries.find(
-          (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
-        ),
-      )
-      .find((entry) => entry !== undefined) ??
-    resolveSelectableProviderInstanceEntry(
-      compatibleEntries.filter((entry) => entry.driverKind === requestedDriverKind),
-      undefined,
-    ) ??
-    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined);
+    overrideSelection ??
+    (pinnedInstanceId != null
+      ? pinnedSelection
+      : (selectedFromCandidates ??
+        resolveSelectableProviderInstanceEntry(
+          compatibleEntries.filter((entry) => entry.driverKind === requestedDriverKind),
+          undefined,
+        ) ??
+        resolveSelectableProviderInstanceEntry(compatibleEntries, undefined)));
   const unavailableProviderInstanceId = selectedProviderEntry
     ? undefined
     : input.lockedProvider

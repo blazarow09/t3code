@@ -600,6 +600,67 @@ describe("resolveComposerProviderSelection", () => {
     expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
   });
 
+  it("does not treat the empty draft placeholder as a provider setup target", () => {
+    const selection = resolveComposerProviderSelection({
+      entries: [entry("antigravity", "antigravity", { enabled: false })],
+      candidateInstanceIds: [NO_PROVIDER_MODEL_SELECTION.instanceId],
+      lockedProvider: null,
+      lockedInstanceId: null,
+    });
+
+    expect(selection.selectedProviderEntry).toBeUndefined();
+    expect(selection.unavailableProviderInstanceId).toBeUndefined();
+  });
+
+  it("keeps a started thread on its own Codex account when the draft names another", () => {
+    const sessionEntry = entry("codex", "codex_sonar", {
+      continuation: { groupKey: "codex:home:shared" },
+    });
+    const otherEntry = entry("codex", "codex_counter", {
+      continuation: { groupKey: "codex:home:shared" },
+    });
+    const selection = resolveComposerProviderSelection({
+      entries: [otherEntry, sessionEntry],
+      candidateInstanceIds: [otherEntry.instanceId, sessionEntry.instanceId],
+      lockedProvider: ProviderDriverKind.make("codex"),
+      lockedInstanceId: sessionEntry.instanceId,
+    });
+
+    expect(selection.selectedProviderEntry?.instanceId).toBe(sessionEntry.instanceId);
+  });
+
+  it("lets a live picker choice move a started thread onto another account that shares resume state", () => {
+    const sessionEntry = entry("codex", "codex_sonar", {
+      continuation: { groupKey: "codex:home:shared" },
+    });
+    const otherEntry = entry("codex", "codex_counter", {
+      continuation: { groupKey: "codex:home:shared" },
+    });
+    const selection = resolveComposerProviderSelection({
+      entries: [sessionEntry, otherEntry],
+      candidateInstanceIds: [otherEntry.instanceId, sessionEntry.instanceId],
+      overrideInstanceId: otherEntry.instanceId,
+      lockedProvider: ProviderDriverKind.make("codex"),
+      lockedInstanceId: sessionEntry.instanceId,
+    });
+
+    expect(selection.selectedProviderEntry?.instanceId).toBe(otherEntry.instanceId);
+  });
+
+  it("does not pre-select another Codex account while the thread's instance is still absent", () => {
+    const otherEntry = entry("codex", "codex_counter");
+    const sessionInstanceId = ProviderInstanceId.make("codex_sonar");
+    const selection = resolveComposerProviderSelection({
+      entries: [otherEntry],
+      candidateInstanceIds: [otherEntry.instanceId, sessionInstanceId],
+      lockedProvider: ProviderDriverKind.make("codex"),
+      lockedInstanceId: sessionInstanceId,
+    });
+
+    expect(selection.selectedProviderEntry).toBeUndefined();
+    expect(selection.unavailableProviderInstanceId).toBe(sessionInstanceId);
+  });
+
   it("keeps the session's continuation group when another instance was selected", () => {
     const sessionEntry = entry("antigravity", "google_work", {
       enabled: false,
