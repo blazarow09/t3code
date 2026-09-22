@@ -225,37 +225,76 @@ function ActivityTimeline({
   );
 }
 
-function TranscriptEntryBody({ entry }: { entry: SubagentTranscriptEntry }) {
+function TranscriptImage({ entry }: { entry: SubagentTranscriptEntry }) {
   const media = use(AgentTranscriptMediaContext);
-  const image =
-    entry.imagePath && media.threadId
-      ? resolveViewedImageAsset(entry.imagePath, {
-          threadId: media.threadId,
-          workspaceRoot: media.workspaceRoot,
-        })
-      : null;
-  const showText =
-    entry.detail !== undefined && (entry.detail !== entry.imagePath || image === null);
+  if (!entry.imagePath) return null;
+  const image = media.threadId
+    ? resolveViewedImageAsset(entry.imagePath, {
+        threadId: media.threadId,
+        workspaceRoot: media.workspaceRoot,
+      })
+    : null;
+  if (image && media.environmentId) {
+    return (
+      <div className="mt-1">
+        <ChatMarkdownAssetImage
+          environmentId={media.environmentId}
+          resource={image.resource}
+          alt={image.alt}
+          srcFragment={image.srcFragment}
+          workspaceRoot={media.workspaceRoot ?? undefined}
+          maxHeightRem={12}
+        />
+      </div>
+    );
+  }
   return (
-    <>
-      {showText ? (
+    <p className="mt-1 break-all font-mono text-[.68rem] text-muted-foreground">
+      {entry.imagePath}
+    </p>
+  );
+}
+
+function TranscriptEntry({ entry }: { entry: SubagentTranscriptEntry }) {
+  const text =
+    entry.detail !== undefined && entry.detail !== entry.imagePath ? entry.detail : undefined;
+  const [open, setOpen] = useState(false);
+  return (
+    <li>
+      {text ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          className="flex w-full gap-2 text-left text-xs"
+        >
+          <span className="mt-0.5 shrink-0 text-muted-foreground/70">
+            {open ? (
+              <ChevronDown aria-hidden className="size-3" />
+            ) : (
+              <ChevronRight aria-hidden className="size-3" />
+            )}
+          </span>
+          <span className="shrink-0 font-mono text-[.65rem] tabular-nums text-muted-foreground/60">
+            {formatActivityTime(entry.at)}
+          </span>
+          <span className="min-w-0 break-words text-foreground/90">{entry.summary}</span>
+        </button>
+      ) : (
+        <div className="flex gap-2 text-xs">
+          <span className="shrink-0 font-mono text-[.65rem] tabular-nums text-muted-foreground/60">
+            {formatActivityTime(entry.at)}
+          </span>
+          <span className="min-w-0 break-words text-foreground/90">{entry.summary}</span>
+        </div>
+      )}
+      {open && text ? (
         <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 px-2 py-1.5 font-sans text-xs leading-relaxed text-foreground/90 select-text">
-          {entry.detail}
+          {text}
         </pre>
       ) : null}
-      {image && media.environmentId ? (
-        <div className="mt-1">
-          <ChatMarkdownAssetImage
-            environmentId={media.environmentId}
-            resource={image.resource}
-            alt={image.alt}
-            srcFragment={image.srcFragment}
-            workspaceRoot={media.workspaceRoot ?? undefined}
-            maxHeightRem={12}
-          />
-        </div>
-      ) : null}
-    </>
+      <TranscriptImage entry={entry} />
+    </li>
   );
 }
 
@@ -265,15 +304,7 @@ function TranscriptTimeline({ entries }: { entries: ReadonlyArray<SubagentTransc
       <DetailSectionHeading>Activity</DetailSectionHeading>
       <ol className="mt-1 space-y-2">
         {entries.map((entry) => (
-          <li key={entry.itemId}>
-            <div className="flex gap-2 text-xs">
-              <span className="shrink-0 font-mono text-[.65rem] tabular-nums text-muted-foreground/60">
-                {formatActivityTime(entry.at)}
-              </span>
-              <span className="min-w-0 break-words text-foreground/90">{entry.summary}</span>
-            </div>
-            <TranscriptEntryBody entry={entry} />
-          </li>
+          <TranscriptEntry key={entry.itemId} entry={entry} />
         ))}
       </ol>
     </div>
