@@ -26,6 +26,7 @@ import {
   toolGroupAction,
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
+  workEntryViewedImagePath,
   type ToolGroupSummaryKind,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
@@ -562,6 +563,8 @@ type MessagesTimelineRowContent =
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
       hasFailure: boolean;
+      /** Shown while the group is closed. Image rows stay visible either way. */
+      viewedImagePaths?: ReadonlyArray<string>;
     }
   | {
       kind: "turn-fold";
@@ -651,6 +654,15 @@ export interface StableMessagesTimelineRowsState {
 
 function workGroupId(timelineEntryId: string): string {
   return `work-group:${timelineEntryId}`;
+}
+
+function viewedImagePaths(entries: ReadonlyArray<WorkLogEntry>): ReadonlyArray<string> {
+  const paths: string[] = [];
+  for (const entry of entries) {
+    const path = workEntryViewedImagePath(entry);
+    if (path) paths.push(path);
+  }
+  return paths;
 }
 
 function expandedWorkGroupRow(
@@ -1858,6 +1870,7 @@ export function deriveMessagesTimelineRows(input: {
           const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
           const singleEntry =
             visibleGroupedEntries.length === 1 ? (visibleGroupedEntries[0] ?? null) : null;
+          const imagePaths = viewedImagePaths(visibleGroupedEntries);
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -1876,6 +1889,7 @@ export function deriveMessagesTimelineRows(input: {
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
+            ...(imagePaths.length > 0 ? { viewedImagePaths: imagePaths } : {}),
           });
           if (expanded) {
             nextRows.push(
