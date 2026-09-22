@@ -262,6 +262,38 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
+      "replaces a shadow-local SQLite database with the shared one",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+
+          yield* writeTextFile(path.join(sharedHome, "logs_2.sqlite"), "shared-logs\n");
+          yield* writeTextFile(path.join(shadowHome, "logs_2.sqlite"), "shadow-logs\n");
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+
+          yield* materializeCodexShadowHome(layout);
+
+          const target = yield* fileSystem.readLink(path.join(shadowHome, "logs_2.sqlite"));
+          const sharedLogs = yield* fileSystem.readFileString(
+            path.join(sharedHome, "logs_2.sqlite"),
+          );
+
+          expect(target).toBe(path.join(sharedHome, "logs_2.sqlite"));
+          expect(sharedLogs).toBe("shared-logs\n");
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
       "accepts Codex-created shadow-local runtime directories",
       () =>
         Effect.gen(function* () {

@@ -43,9 +43,11 @@ const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
 /**
  * SQLite derives its WAL sidecar paths from the filename it is handed, so a
  * shadow home that shares a database through a symlink still grows real
- * `-shm`/`-wal` files of its own. They are per-connection runtime state, not
- * user configuration: leave them and one database ends up with two write-ahead
- * logs, so replace them with the shared copies like any other runtime entry.
+ * `-shm`/`-wal` files of its own. Codex can also create the database file
+ * itself in the shadow home (`logs_2.sqlite`) when that link is missing.
+ * Leave either and the shadow instance fails to start. They are shared
+ * runtime state, not a private account file, so replace them with links to
+ * the shared copies.
  */
 const REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN = /\.(?:db|sqlite)-(?:shm|wal|journal)$/u;
 const SHARED_SQLITE_DATABASE_PATTERN = /\.(?:db|sqlite)$/u;
@@ -54,7 +56,8 @@ const SQLITE_SIDECAR_SUFFIXES = ["-shm", "-wal", "-journal"] as const;
 function isReplaceableSharedRuntimeEntry(entryName: string): boolean {
   return (
     REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(entryName) ||
-    REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN.test(entryName)
+    REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN.test(entryName) ||
+    SHARED_SQLITE_DATABASE_PATTERN.test(entryName)
   );
 }
 
@@ -85,6 +88,8 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
     mode: "authOverlay",
     sharedHomePath,
     effectiveHomePath,
+    // Resume state lives in the shared home. An auth overlay can continue
+    // those sessions, so it stays in the same continuation group.
     continuationKey: `codex:home:${sharedHomePath}`,
   };
 });
