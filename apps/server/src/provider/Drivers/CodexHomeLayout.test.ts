@@ -331,6 +331,35 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
+      "creates SQLite sidecar links before the shared sidecars exist",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+
+          yield* writeTextFile(path.join(sharedHome, "thread_history_1.sqlite"), "shared-db\n");
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+
+          yield* materializeCodexShadowHome(layout);
+
+          for (const suffix of ["-wal", "-shm", "-journal"]) {
+            const sidecar = `thread_history_1.sqlite${suffix}`;
+            const target = yield* fileSystem.readLink(path.join(shadowHome, sidecar));
+            expect(target).toBe(path.join(sharedHome, sidecar));
+          }
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
       "rejects shared entries that already exist in the shadow home as real files",
       () =>
         Effect.gen(function* () {

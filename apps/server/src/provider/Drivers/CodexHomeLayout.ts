@@ -47,7 +47,9 @@ const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
  * user configuration: leave them and one database ends up with two write-ahead
  * logs, so replace them with the shared copies like any other runtime entry.
  */
-const REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN = /\.sqlite-(?:shm|wal|journal)$/u;
+const REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN = /\.(?:db|sqlite)-(?:shm|wal|journal)$/u;
+const SHARED_SQLITE_DATABASE_PATTERN = /\.(?:db|sqlite)$/u;
+const SQLITE_SIDECAR_SUFFIXES = ["-shm", "-wal", "-journal"] as const;
 
 function isReplaceableSharedRuntimeEntry(entryName: string): boolean {
   return (
@@ -420,6 +422,11 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
   for (const entryName of sharedEntryNames) {
     if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
       entries.add(entryName);
+      if (SHARED_SQLITE_DATABASE_PATTERN.test(entryName)) {
+        for (const suffix of SQLITE_SIDECAR_SUFFIXES) {
+          entries.add(`${entryName}${suffix}`);
+        }
+      }
     }
   }
 
