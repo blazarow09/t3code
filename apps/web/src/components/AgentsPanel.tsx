@@ -22,14 +22,23 @@ import {
   formatSubagentTokenCount,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { SubagentTranscriptEntry } from "@t3tools/client-runtime/state/subagentRuntime";
+import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { createContext, use, useEffect, useRef, useState } from "react";
 
+import { ChatMarkdownAssetImage } from "~/components/ChatMarkdown";
 import type { AgentToolActivityEntry } from "~/session-logic";
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
+
+const AgentTranscriptMediaContext = createContext<{
+  readonly environmentId: EnvironmentId | null;
+  readonly threadId: ThreadId | null;
+  readonly workspaceRoot: string | null;
+}>({ environmentId: null, threadId: null, workspaceRoot: null });
 
 /**
  * In-flight states all present as Working (one steady state, per the
@@ -216,6 +225,61 @@ function ActivityTimeline({
   );
 }
 
+function TranscriptEntryBody({ entry }: { entry: SubagentTranscriptEntry }) {
+  const media = use(AgentTranscriptMediaContext);
+  const image =
+    entry.imagePath && media.threadId
+      ? resolveViewedImageAsset(entry.imagePath, {
+          threadId: media.threadId,
+          workspaceRoot: media.workspaceRoot,
+        })
+      : null;
+  const showText =
+    entry.detail !== undefined && (entry.detail !== entry.imagePath || image === null);
+  return (
+    <>
+      {showText ? (
+        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 px-2 py-1.5 font-sans text-xs leading-relaxed text-foreground/90 select-text">
+          {entry.detail}
+        </pre>
+      ) : null}
+      {image && media.environmentId ? (
+        <div className="mt-1">
+          <ChatMarkdownAssetImage
+            environmentId={media.environmentId}
+            resource={image.resource}
+            alt={image.alt}
+            srcFragment={image.srcFragment}
+            workspaceRoot={media.workspaceRoot ?? undefined}
+            maxHeightRem={12}
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function TranscriptTimeline({ entries }: { entries: ReadonlyArray<SubagentTranscriptEntry> }) {
+  return (
+    <div className="mt-2">
+      <DetailSectionHeading>Activity</DetailSectionHeading>
+      <ol className="mt-1 space-y-2">
+        {entries.map((entry) => (
+          <li key={entry.itemId}>
+            <div className="flex gap-2 text-xs">
+              <span className="shrink-0 font-mono text-[.65rem] tabular-nums text-muted-foreground/60">
+                {formatActivityTime(entry.at)}
+              </span>
+              <span className="min-w-0 break-words text-foreground/90">{entry.summary}</span>
+            </div>
+            <TranscriptEntryBody entry={entry} />
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /**
  * Inline drill-down for one spawned agent: metrics, activity, outcome, and
  * read-only run handles. Renders below the fixed row so the roster's height
@@ -249,8 +313,10 @@ function AgentDetail({
   const runHandles = agent.runHandles;
   const hasHandles = runHandles !== null || agent.outputFile !== null;
   const hasToolHistory = toolActivity !== undefined && toolActivity.length > 0;
+  const hasTranscript = agent.transcript.length > 0;
   const activityEmpty =
     agent.recentActivity.length === 0 &&
+    !hasTranscript &&
     agent.result === null &&
     agent.error === null &&
     !hasToolHistory;
@@ -273,7 +339,9 @@ function AgentDetail({
           }
         />
       </div>
-      {agent.recentActivity.length > 0 ? (
+      {hasTranscript ? (
+        <TranscriptTimeline entries={agent.transcript} />
+      ) : agent.recentActivity.length > 0 ? (
         <ActivityTimeline
           heading="Activity"
           entries={agent.recentActivity.map((entry) => ({ at: entry.at, label: entry.summary }))}
@@ -371,12 +439,12 @@ function AgentRow({
         ) : null}
         <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
         {role ? (
-          <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-3xs text-muted-foreground">
+          <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
             {role}
           </span>
         ) : null}
       </span>
-      <span className="col-start-3 row-start-1 min-w-14 text-right font-mono text-2xs text-muted-foreground/80">
+      <span className="col-start-3 row-start-1 min-w-14 text-right font-mono text-[.7rem] text-muted-foreground/80">
         <span className="inline-flex items-center gap-1">
           <AgentElapsed agent={agent} />
           {agent.status === "completed" ? (
@@ -392,7 +460,7 @@ function AgentRow({
       >
         {activity ?? statusLabel}
       </span>
-      <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-2xs tabular-nums text-muted-foreground/70">
+      <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
         {metadata.join(" · ")}
       </span>
       <span className="sr-only">{statusLabel}</span>
@@ -461,7 +529,7 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
           >
             <span
               className={cn(
-                "font-mono text-3xs",
+                "font-mono text-[.65rem]",
                 phase.state === "running"
                   ? "text-info-foreground"
                   : phase.state === "done"
@@ -474,7 +542,7 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
             </span>
             <span className="flex items-center gap-0.5">
               {phase.members.length === 0 ? (
-                <span className="font-mono text-3xs text-muted-foreground/50">–</span>
+                <span className="font-mono text-[.6rem] text-muted-foreground/50">–</span>
               ) : (
                 phase.members.map((member) => <StatusDot key={member.id} status={member.status} />)
               )}
@@ -508,7 +576,7 @@ function WorkflowScriptView({
     <div className="mx-1.5 mb-1 rounded-md border border-border/60 bg-background/60">
       <div className="flex items-center gap-2 border-b border-border/50 px-2 py-1">
         <Braces aria-hidden className="size-3 text-muted-foreground" />
-        <span className="truncate font-mono text-3xs text-muted-foreground">
+        <span className="truncate font-mono text-[.65rem] text-muted-foreground">
           {scriptPath.split("/").at(-1)}
         </span>
         <Button
@@ -523,7 +591,7 @@ function WorkflowScriptView({
       </div>
       <div className="max-h-72 overflow-auto p-2">
         {result._tag === "Success" ? (
-          <pre className="whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed text-foreground/90">
+          <pre className="whitespace-pre-wrap break-words font-mono text-[.7rem] leading-relaxed text-foreground/90">
             {result.value.contents}
             {result.value.truncated ? "\n… (truncated)" : ""}
           </pre>
@@ -568,7 +636,7 @@ function PhaseSection({
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         className={cn(
-          "mt-2 flex w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-3xs font-medium uppercase tracking-wider hover:bg-accent/40",
+          "mt-2 flex w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-[.65rem] font-medium uppercase tracking-wider hover:bg-accent/40",
           phase.state === "done"
             ? "text-success-foreground"
             : phase.state === "running"
@@ -638,7 +706,7 @@ function ExpandedWorkflowSection({
   const canShowScript = scriptPath !== undefined && environmentId !== null && threadId !== null;
   return (
     <section className="rounded-lg border border-border/50 bg-card/30 p-1.5">
-      <div className="flex items-center gap-2 px-1.5 pt-0.5 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-2 px-1.5 pt-0.5 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
         <StatusDot status={group.workflow.status} />
         <span className="min-w-0 truncate">
           {group.workflow.workflowName ?? group.workflow.title}
@@ -730,7 +798,7 @@ function CollapsedWorkflowSection({
         <span className="truncate text-sm">
           {group.workflow.workflowName ?? group.workflow.title}
         </span>
-        <span className="ml-auto flex items-center gap-1.5 font-mono text-2xs text-muted-foreground/80">
+        <span className="ml-auto flex items-center gap-1.5 font-mono text-[.7rem] text-muted-foreground/80">
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
           <span>{members.length} agents</span>
           <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
@@ -772,11 +840,13 @@ export function AgentsPanel({
   model,
   environmentId = null,
   threadId = null,
+  workspaceRoot = null,
   agentToolActivity,
 }: {
   model: AgentPanelModel;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
+  workspaceRoot?: string | null;
   agentToolActivity?: AgentToolActivityByAgent | undefined;
 }) {
   if (!model.hasAgents) {
@@ -793,46 +863,48 @@ export function AgentsPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-2 p-2">
-          {model.workflows.map((group) => (
-            <WorkflowSection
-              key={group.workflow.id}
-              group={group}
-              environmentId={environmentId}
-              threadId={threadId}
-              agentToolActivity={agentToolActivity}
-            />
-          ))}
-          {model.directAgents.length > 0 ? (
-            <section>
-              <div className="px-1.5 pt-1 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
-                Direct spawns
-              </div>
-              {model.directAgents.map((agent) => (
-                <AgentRow
-                  key={agent.id}
-                  agent={agent}
-                  toolActivity={agentToolActivity?.[agent.id]}
-                />
-              ))}
-            </section>
-          ) : null}
-        </div>
-      </ScrollArea>
-      <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-2xs text-muted-foreground">
-        <span className="flex items-center gap-2">
-          {model.runningCount + model.waitingCount > 0 ? (
-            <span className="text-info-foreground">
-              ● {model.runningCount + model.waitingCount} working
-            </span>
-          ) : null}
-          {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
-          {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
-        </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
-      </footer>
-    </div>
+    <AgentTranscriptMediaContext.Provider value={{ environmentId, threadId, workspaceRoot }}>
+      <div className="flex h-full min-h-0 flex-col">
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-2 p-2">
+            {model.workflows.map((group) => (
+              <WorkflowSection
+                key={group.workflow.id}
+                group={group}
+                environmentId={environmentId}
+                threadId={threadId}
+                agentToolActivity={agentToolActivity}
+              />
+            ))}
+            {model.directAgents.length > 0 ? (
+              <section>
+                 <div className="px-1.5 pt-1 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Direct spawns
+                </div>
+                {model.directAgents.map((agent) => (
+                  <AgentRow
+                    key={agent.id}
+                    agent={agent}
+                    toolActivity={agentToolActivity?.[agent.id]}
+                  />
+                ))}
+              </section>
+            ) : null}
+          </div>
+        </ScrollArea>
+         <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-2xs text-muted-foreground">
+          <span className="flex items-center gap-2">
+            {model.runningCount + model.waitingCount > 0 ? (
+              <span className="text-info-foreground">
+                ● {model.runningCount + model.waitingCount} working
+              </span>
+            ) : null}
+            {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
+            {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
+          </span>
+          <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        </footer>
+      </div>
+    </AgentTranscriptMediaContext.Provider>
   );
 }
