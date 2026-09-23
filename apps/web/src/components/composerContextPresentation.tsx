@@ -375,20 +375,12 @@ function UnresolvedContextChip(props: { label: string }) {
 function ThreadContextChip(props: { label: string }) {
   return (
     <ContextChip
-      icon={
-        <MessagesSquareIcon
-          className={cn(
-            COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-            CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES.thread,
-            "size-3.5",
-          )}
-        />
-      }
+      icon={<MessagesSquareIcon />}
       label={props.label}
       kindLabel="Conversation"
       details="Referenced conversation. Its context is read on demand, not inlined."
       detailsMode="tooltip"
-      toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.thread}
+      kind="thread"
     />
   );
 }
