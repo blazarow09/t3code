@@ -1,3 +1,5 @@
+import * as NodeFs from "node:fs";
+
 import { ProviderDriverKind, type CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -7,6 +9,10 @@ import * as PlatformError from "effect/PlatformError";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  holdCodexShadowSqliteSidecar,
+  releaseCodexShadowSqliteSidecar,
+} from "./CodexShadowSqliteGuard.ts";
 
 export interface CodexHomeLayout {
   readonly mode: "direct" | "authOverlay";
@@ -43,11 +49,15 @@ const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
 /**
  * SQLite derives its WAL sidecar paths from the filename it is handed, so a
  * shadow home that shares a database through a symlink still grows real
- * `-shm`/`-wal` files of its own. Codex can also create the database file
- * itself in the shadow home (`logs_2.sqlite`) when that link is missing.
- * Leave either and the shadow instance fails to start. They are shared
- * runtime state, not a private account file, so replace them with links to
- * the shared copies.
+ * `-shm`/`-wal` files of its own. Codex deletes that path when it closes the
+ * database, which removes the sidecar symlink and lets the next launch
+ * create a private WAL. On Windows the database file itself is a hardlink,
+ * because a symlink copied into Codex's `db-backups` folder still points at
+ * the live database. Sidecar symlinks are held open so Codex cannot delete
+ * them. Codex can also create the database file itself in the shadow home
+ * (`logs_2.sqlite`) when that link is missing. These are shared runtime
+ * state, not private account files, so replace them with links to the shared
+ * copies.
  */
 const REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN = /\.(?:db|sqlite)-(?:shm|wal|journal)$/u;
 const SHARED_SQLITE_DATABASE_PATTERN = /\.(?:db|sqlite)$/u;
@@ -103,7 +113,16 @@ export class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShad
   "CodexShadowHomeFileSystemError",
   {
     ...CodexShadowHomeContext,
-    operation: Schema.Literals(["readLink", "makeDirectory", "readDirectory", "remove", "symlink"]),
+    operation: Schema.Literals([
+      "readLink",
+      "makeDirectory",
+      "readDirectory",
+      "remove",
+      "symlink",
+      "link",
+      "guard",
+      "rename",
+    ]),
     path: Schema.String,
     targetPath: Schema.optional(Schema.String),
     entryName: Schema.optional(Schema.String),
@@ -242,15 +261,236 @@ const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(f
   }
 });
 
+interface SidecarLease {
+  readonly paths: string[];
+}
+
+function sameDatabaseFile(target: string, link: string): boolean {
+  try {
+    if (NodeFs.lstatSync(link).isSymbolicLink()) return false;
+    const targetStat = NodeFs.statSync(target);
+    const linkStat = NodeFs.statSync(link);
+    return targetStat.dev === linkStat.dev && targetStat.ino === linkStat.ino;
+  } catch {
+    return false;
+  }
+}
+
+const shadowFileSystemError = (input: {
+  readonly sharedHomePath: string;
+  readonly effectiveHomePath: string;
+  readonly operation: "remove" | "symlink" | "link" | "guard" | "rename";
+  readonly path: string;
+  readonly targetPath?: string;
+  readonly entryName?: string;
+  readonly cause: unknown;
+}) =>
+  new CodexShadowHomeFileSystemError({
+    sharedHomePath: input.sharedHomePath,
+    effectiveHomePath: input.effectiveHomePath,
+    operation: input.operation,
+    path: input.path,
+    ...(input.targetPath === undefined ? {} : { targetPath: input.targetPath }),
+    ...(input.entryName === undefined ? {} : { entryName: input.entryName }),
+    cause: input.cause,
+  });
+
+const removeShadowEntry = Effect.fn("CodexHomeLayout.removeShadowEntry")(function* (input: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly sharedHomePath: string;
+  readonly effectiveHomePath: string;
+  readonly entryName: string;
+  readonly linkPath: string;
+  readonly recursive?: boolean;
+}): Effect.fn.Return<void, CodexShadowHomeError> {
+  yield* input.fileSystem.remove(input.linkPath, { recursive: input.recursive ?? false }).pipe(
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        shadowFileSystemError({
+          sharedHomePath: input.sharedHomePath,
+          effectiveHomePath: input.effectiveHomePath,
+          operation: "remove",
+          path: input.linkPath,
+          entryName: input.entryName,
+          cause,
+        }),
+    }),
+  );
+});
+
+const protectSidecar = Effect.fn("CodexHomeLayout.protectSidecar")(function* (input: {
+  readonly lease: SidecarLease;
+  readonly sharedHomePath: string;
+  readonly effectiveHomePath: string;
+  readonly entryName: string;
+  readonly linkPath: string;
+}): Effect.fn.Return<void, CodexShadowHomeError> {
+  if (
+    process.platform !== "win32" ||
+    !REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN.test(input.entryName)
+  ) {
+    return;
+  }
+  yield* Effect.tryPromise({
+    try: () => holdCodexShadowSqliteSidecar(input.linkPath),
+    catch: (cause) =>
+      shadowFileSystemError({
+        sharedHomePath: input.sharedHomePath,
+        effectiveHomePath: input.effectiveHomePath,
+        operation: "guard",
+        path: input.linkPath,
+        entryName: input.entryName,
+        cause,
+      }),
+  });
+  input.lease.paths.push(input.linkPath);
+});
+
+const releaseHeldSidecar = (lease: SidecarLease, linkPath: string) =>
+  Effect.promise(async () => {
+    const index = lease.paths.lastIndexOf(linkPath);
+    if (index < 0) return;
+    lease.paths.splice(index, 1);
+    await releaseCodexShadowSqliteSidecar(linkPath);
+  });
+
+const ensureDatabaseHardlink = Effect.fn("CodexHomeLayout.ensureDatabaseHardlink")(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly sharedHomePath: string;
+    readonly effectiveHomePath: string;
+    readonly entryName: string;
+  }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
+    const path = yield* Path.Path;
+    const target = path.join(input.sharedHomePath, input.entryName);
+    const link = path.join(input.effectiveHomePath, input.entryName);
+    const state = yield* readLinkState({
+      ...input,
+      linkPath: link,
+    });
+    if (state._tag === "NotSymlink" && sameDatabaseFile(target, link)) return;
+    if (state._tag === "NotSymlink" && !isReplaceableSharedRuntimeEntry(input.entryName)) {
+      return yield* new CodexShadowHomeEntryConflictError({
+        sharedHomePath: input.sharedHomePath,
+        effectiveHomePath: input.effectiveHomePath,
+        entryName: input.entryName,
+        linkPath: link,
+        targetPath: target,
+      });
+    }
+    if (state._tag !== "Missing") {
+      yield* removeShadowEntry({
+        ...input,
+        linkPath: link,
+        recursive: state._tag === "NotSymlink",
+      });
+    }
+    const hardlinkResult = yield* Effect.try({
+      try: (): "linked" | "cross-device" => {
+        try {
+          NodeFs.linkSync(target, link);
+          return "linked";
+        } catch (cause) {
+          if (
+            typeof cause === "object" &&
+            cause !== null &&
+            "code" in cause &&
+            cause.code === "EXDEV"
+          ) {
+            return "cross-device";
+          }
+          throw cause;
+        }
+      },
+      catch: (cause) =>
+        shadowFileSystemError({
+          sharedHomePath: input.sharedHomePath,
+          effectiveHomePath: input.effectiveHomePath,
+          operation: "link",
+          path: link,
+          targetPath: target,
+          entryName: input.entryName,
+          cause,
+        }),
+    });
+    if (hardlinkResult === "cross-device") {
+      yield* input.fileSystem.symlink(target, link).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            shadowFileSystemError({
+              sharedHomePath: input.sharedHomePath,
+              effectiveHomePath: input.effectiveHomePath,
+              operation: "symlink",
+              path: link,
+              targetPath: target,
+              entryName: input.entryName,
+              cause,
+            }),
+        }),
+      );
+    }
+  },
+);
+
+const quarantineShadowDatabaseBackups = Effect.fn(
+  "CodexHomeLayout.quarantineShadowDatabaseBackups",
+)(function* (input: {
+  readonly sharedHomePath: string;
+  readonly effectiveHomePath: string;
+}): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
+  const path = yield* Path.Path;
+  const backupRoot = path.join(input.effectiveHomePath, "db-backups");
+  yield* Effect.try({
+    try: () => {
+      let backupStat: NodeFs.Stats;
+      try {
+        backupStat = NodeFs.lstatSync(backupRoot);
+      } catch (cause) {
+        if (NodeFs.existsSync(backupRoot)) throw cause;
+        return;
+      }
+      if (backupStat.isSymbolicLink() || !backupStat.isDirectory()) return;
+      const dangerous = NodeFs.readdirSync(backupRoot, {
+        recursive: true,
+        withFileTypes: true,
+      }).some(
+        (entry) =>
+          entry.isSymbolicLink() &&
+          (SHARED_SQLITE_DATABASE_PATTERN.test(entry.name) ||
+            REPLACEABLE_SHARED_RUNTIME_ENTRY_PATTERN.test(entry.name)),
+      );
+      if (!dangerous) return;
+      NodeFs.renameSync(backupRoot, `${backupRoot}.quarantine-${Date.now()}`);
+    },
+    catch: (cause) =>
+      shadowFileSystemError({
+        sharedHomePath: input.sharedHomePath,
+        effectiveHomePath: input.effectiveHomePath,
+        operation: "rename",
+        path: backupRoot,
+        entryName: "db-backups",
+        cause,
+      }),
+  });
+});
+
 const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
   readonly effectiveHomePath: string;
   readonly entryName: string;
+  readonly lease: SidecarLease;
 }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
   const path = yield* Path.Path;
   const target = path.join(input.sharedHomePath, input.entryName);
   const link = path.join(input.effectiveHomePath, input.entryName);
+  if (
+    process.platform === "win32" &&
+    SHARED_SQLITE_DATABASE_PATTERN.test(input.entryName) &&
+    NodeFs.existsSync(target)
+  ) {
+    return yield* ensureDatabaseHardlink(input);
+  }
   const state = yield* readLinkState({
     ...input,
     linkPath: link,
@@ -259,7 +499,7 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   const createLink = input.fileSystem.symlink(target, link).pipe(
     Effect.catchTags({
       PlatformError: (cause) =>
-        new CodexShadowHomeFileSystemError({
+        shadowFileSystemError({
           sharedHomePath: input.sharedHomePath,
           effectiveHomePath: input.effectiveHomePath,
           operation: "symlink",
@@ -270,6 +510,13 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
         }),
     }),
   );
+  const protect = protectSidecar({
+    lease: input.lease,
+    sharedHomePath: input.sharedHomePath,
+    effectiveHomePath: input.effectiveHomePath,
+    entryName: input.entryName,
+    linkPath: link,
+  });
 
   if (state._tag === "NotSymlink") {
     if (!isReplaceableSharedRuntimeEntry(input.entryName)) {
@@ -306,43 +553,31 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
       }
     }
 
-    yield* input.fileSystem.remove(link, { recursive: true }).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          new CodexShadowHomeFileSystemError({
-            sharedHomePath: input.sharedHomePath,
-            effectiveHomePath: input.effectiveHomePath,
-            operation: "remove",
-            path: link,
-            entryName: input.entryName,
-            cause,
-          }),
-      }),
-    );
-    return yield* createLink;
+    yield* releaseHeldSidecar(input.lease, link);
+    yield* removeShadowEntry({
+      ...input,
+      linkPath: link,
+      recursive: true,
+    });
+    yield* createLink;
+    return yield* protect;
   }
 
   if (state._tag === "Missing") {
-    return yield* createLink;
+    yield* createLink;
+    return yield* protect;
   }
 
   const resolvedExisting = path.resolve(path.dirname(link), state.target);
   if (resolvedExisting !== target) {
-    yield* input.fileSystem.remove(link).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          new CodexShadowHomeFileSystemError({
-            sharedHomePath: input.sharedHomePath,
-            effectiveHomePath: input.effectiveHomePath,
-            operation: "remove",
-            path: link,
-            entryName: input.entryName,
-            cause,
-          }),
-      }),
-    );
+    yield* releaseHeldSidecar(input.lease, link);
+    yield* removeShadowEntry({
+      ...input,
+      linkPath: link,
+    });
     yield* createLink;
   }
+  yield* protect;
 });
 
 const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsPrivate")(
@@ -385,6 +620,14 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const lease: SidecarLease = { paths: [] };
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(() =>
+      Promise.all(
+        lease.paths.splice(0).map((linkPath) => releaseCodexShadowSqliteSidecar(linkPath)),
+      ).then(() => undefined),
+    ),
+  );
 
   const makeDirectory = (directoryPath: string) =>
     fileSystem.makeDirectory(directoryPath, { recursive: true }).pipe(
@@ -410,6 +653,11 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     ],
     { concurrency: "unbounded" },
   );
+
+  yield* quarantineShadowDatabaseBackups({
+    sharedHomePath: layout.sharedHomePath,
+    effectiveHomePath,
+  });
 
   const sharedEntryNames = yield* fileSystem.readDirectory(layout.sharedHomePath).pipe(
     Effect.catchTags({
@@ -460,6 +708,7 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
         sharedHomePath: layout.sharedHomePath,
         effectiveHomePath,
         entryName,
+        lease,
       });
     },
     { discard: true },

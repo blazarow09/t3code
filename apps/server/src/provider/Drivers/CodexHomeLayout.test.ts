@@ -1,3 +1,4 @@
+import * as NodeFs from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -283,13 +284,20 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
           yield* materializeCodexShadowHome(layout);
 
-          const target = yield* fileSystem.readLink(path.join(shadowHome, "logs_2.sqlite"));
-          const sharedLogs = yield* fileSystem.readFileString(
-            path.join(sharedHome, "logs_2.sqlite"),
-          );
-
-          expect(target).toBe(path.join(sharedHome, "logs_2.sqlite"));
+          const sharedLogsPath = path.join(sharedHome, "logs_2.sqlite");
+          const shadowLogsPath = path.join(shadowHome, "logs_2.sqlite");
+          const sharedLogs = yield* fileSystem.readFileString(sharedLogsPath);
           expect(sharedLogs).toBe("shared-logs\n");
+          if (process.platform === "win32") {
+            const sharedStat = NodeFs.statSync(sharedLogsPath);
+            const shadowStat = NodeFs.statSync(shadowLogsPath);
+            expect(NodeFs.lstatSync(shadowLogsPath).isSymbolicLink()).toBe(false);
+            expect(shadowStat.ino).toBe(sharedStat.ino);
+            expect(shadowStat.dev).toBe(sharedStat.dev);
+          } else {
+            const target = yield* fileSystem.readLink(shadowLogsPath);
+            expect(target).toBe(sharedLogsPath);
+          }
         }),
     );
 
@@ -388,6 +396,69 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             const target = yield* fileSystem.readLink(path.join(shadowHome, sidecar));
             expect(target).toBe(path.join(sharedHome, sidecar));
           }
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported || process.platform !== "win32")(
+      "keeps SQLite sidecar symlinks after Codex tries to delete them",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          const walName = "goals_1.sqlite-wal";
+
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "shared-db\n");
+          yield* writeTextFile(path.join(sharedHome, walName), "shared-wal\n");
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+          yield* materializeCodexShadowHome(layout);
+
+          const shadowWal = path.join(shadowHome, walName);
+          expect(() => NodeFs.rmSync(shadowWal)).toThrow(/EBUSY|EPERM/);
+          expect(yield* fileSystem.readLink(shadowWal)).toBe(path.join(sharedHome, walName));
+          expect(yield* fileSystem.readFileString(path.join(sharedHome, walName))).toBe(
+            "shared-wal\n",
+          );
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "quarantines shadow database backups that symlink at a shared database",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          const sharedLogs = path.join(sharedHome, "logs_2.sqlite");
+          const backupDir = path.join(shadowHome, "db-backups", "sqlite-1");
+
+          yield* writeTextFile(sharedLogs, "shared-logs\n");
+          yield* fileSystem.makeDirectory(backupDir, { recursive: true });
+          yield* fileSystem.symlink(sharedLogs, path.join(backupDir, "logs_2.sqlite"));
+          yield* writeTextFile(path.join(backupDir, "logs_2.sqlite-wal"), "private-wal\n");
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+          yield* materializeCodexShadowHome(layout);
+
+          const entries = yield* fileSystem.readDirectory(shadowHome);
+          expect(entries).not.toContain("db-backups");
+          expect(entries.some((entry) => entry.startsWith("db-backups.quarantine-"))).toBe(true);
+          expect(yield* fileSystem.readFileString(sharedLogs)).toBe("shared-logs\n");
         }),
     );
 
