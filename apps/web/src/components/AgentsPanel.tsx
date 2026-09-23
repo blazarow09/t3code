@@ -28,6 +28,7 @@ import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { createContext, use, useEffect, useRef, useState } from "react";
 
 import { ChatMarkdownAssetImage } from "~/components/ChatMarkdown";
+import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
 import type { AgentToolActivityEntry } from "~/session-logic";
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
@@ -38,6 +39,7 @@ const AgentTranscriptMediaContext = createContext<{
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
   readonly workspaceRoot: string | null;
+  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }>({ environmentId: null, threadId: null, workspaceRoot: null });
 
 /**
@@ -244,6 +246,7 @@ function TranscriptImage({ entry }: { entry: SubagentTranscriptEntry }) {
           srcFragment={image.srcFragment}
           workspaceRoot={media.workspaceRoot ?? undefined}
           maxHeightRem={12}
+          onImageExpand={media.onImageExpand}
         />
       </div>
     );
@@ -302,7 +305,7 @@ function TranscriptTimeline({ entries }: { entries: ReadonlyArray<SubagentTransc
   return (
     <div className="mt-2">
       <DetailSectionHeading>Activity</DetailSectionHeading>
-      <ol className="mt-1 space-y-2">
+      <ol className="mt-1 space-y-2" data-image-gallery>
         {entries.map((entry) => (
           <TranscriptEntry key={entry.itemId} entry={entry} />
         ))}
@@ -873,12 +876,14 @@ export function AgentsPanel({
   threadId = null,
   workspaceRoot = null,
   agentToolActivity,
+  onImageExpand,
 }: {
   model: AgentPanelModel;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
   workspaceRoot?: string | null;
   agentToolActivity?: AgentToolActivityByAgent | undefined;
+  onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   if (!model.hasAgents) {
     return (
@@ -894,7 +899,9 @@ export function AgentsPanel({
   }
 
   return (
-    <AgentTranscriptMediaContext.Provider value={{ environmentId, threadId, workspaceRoot }}>
+    <AgentTranscriptMediaContext.Provider
+      value={{ environmentId, threadId, workspaceRoot, onImageExpand }}
+    >
       <div className="flex h-full min-h-0 flex-col">
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-2 p-2">
