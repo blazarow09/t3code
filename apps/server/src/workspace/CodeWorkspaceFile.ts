@@ -11,7 +11,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { parse as parseJsonc, type ParseError } from "jsonc-parser";
+// The package's UMD entry (its `main`) keeps `require("./impl/*")` relative to
+// the emitted bundle, which the server sidecar cannot resolve. Import the ESM
+// entry so the server bundle inlines the parser instead of the UMD wrapper.
+import { parse as parseJsonc, type ParseError } from "jsonc-parser/lib/esm/main.js";
 
 import { expandHomePathWith } from "../pathExpansion.ts";
 
