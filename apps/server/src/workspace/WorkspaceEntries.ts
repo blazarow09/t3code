@@ -9,6 +9,7 @@ import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
 
 import type {
+  FilesystemBrowseEntry,
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   ProjectEntry,
@@ -26,6 +27,7 @@ import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/p
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { CODE_WORKSPACE_EXTENSION } from "./CodeWorkspaceFile.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -226,18 +228,28 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
+      const entries: Array<FilesystemBrowseEntry> = [];
       for (const dirent of dirents) {
         if (
-          dirent.isDirectory() &&
-          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
+          !dirent.name.toLowerCase().startsWith(lowerPrefix) ||
+          (!showHidden && dirent.name.startsWith("."))
         ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
+          continue;
         }
+        const kind = dirent.isDirectory()
+          ? "directory"
+          : input.includeWorkspaceFiles === true &&
+              dirent.isFile() &&
+              dirent.name.toLowerCase().endsWith(CODE_WORKSPACE_EXTENSION)
+            ? "workspaceFile"
+            : null;
+        if (kind === null) continue;
+        entries.push({
+          name: dirent.name,
+          fullPath: path.join(parentPath, dirent.name),
+          // Older clients treat every entry as a directory, so only files are tagged.
+          ...(kind === "workspaceFile" ? { kind } : {}),
+        });
       }
 
       return {

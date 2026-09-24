@@ -20,7 +20,7 @@ import {
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
 } from "./projects.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 export function resolveFilesystemReadAccess(input: {
   readonly isCatalogReady: boolean;
@@ -121,6 +121,10 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
+    }),
+    readCodeWorkspace: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:filesystem:read-code-workspace",
+      tag: WS_METHODS.filesystemReadCodeWorkspace,
     }),
   };
 }

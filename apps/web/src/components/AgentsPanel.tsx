@@ -25,7 +25,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SubagentTranscriptEntry } from "@t3tools/client-runtime/state/subagentRuntime";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { createContext, use, useEffect, useRef, useState } from "react";
+import { createContext, use, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ChatMarkdownAssetImage } from "~/components/ChatMarkdown";
 import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
@@ -120,7 +120,7 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   }
   return (
     <span ref={textRef} className="tabular-nums">
-      {elapsedBetween(startedAt, live ? null : agent.completedAt)}
+      {elapsedBetween(startedAt, live ? null : (agent.completedAt ?? agent.updatedAt))}
     </span>
   );
 }
@@ -169,7 +169,7 @@ function DetailRow({
   mono = false,
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   mono?: boolean;
 }) {
   return (
@@ -369,7 +369,13 @@ function AgentDetail({
         <DetailRow
           label="Duration"
           value={
-            usage?.durationMs !== undefined ? formatElapsedSeconds(usage.durationMs / 1000) : "—"
+            usage?.durationMs !== undefined ? (
+              formatElapsedSeconds(usage.durationMs / 1000)
+            ) : agent.startedAt ? (
+              <AgentElapsed agent={agent} />
+            ) : (
+              "—"
+            )
           }
         />
       </div>

@@ -29,12 +29,16 @@ export type FilesystemGetMetadataResult = typeof FilesystemGetMetadataResult.Typ
 export const FilesystemBrowseInput = Schema.Struct({
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
+  // Also list VS Code `.code-workspace` files so they can be imported as projects.
+  includeWorkspaceFiles: Schema.optional(Schema.Boolean),
 });
 export type FilesystemBrowseInput = typeof FilesystemBrowseInput.Type;
 
 export const FilesystemBrowseEntry = Schema.Struct({
   name: TrimmedNonEmptyString,
   fullPath: TrimmedNonEmptyString,
+  // Absent means directory, for servers that predate workspace files.
+  kind: Schema.optional(Schema.Literals(["directory", "workspaceFile"])),
 });
 export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
 
@@ -86,3 +90,26 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     } as any);
   }
 }
+
+export const FilesystemReadCodeWorkspaceInput = Schema.Struct({
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
+});
+export type FilesystemReadCodeWorkspaceInput = typeof FilesystemReadCodeWorkspaceInput.Type;
+
+/** A `.code-workspace` file mapped onto a project: its own folder is the root. */
+export const FilesystemReadCodeWorkspaceResult = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+  // Workspace folders outside workspaceRoot; folders inside it are already reachable.
+  additionalDirectories: Schema.Array(TrimmedNonEmptyString),
+});
+export type FilesystemReadCodeWorkspaceResult = typeof FilesystemReadCodeWorkspaceResult.Type;
+
+export class FilesystemReadCodeWorkspaceError extends Schema.TaggedError<FilesystemReadCodeWorkspaceError>()(
+  "FilesystemReadCodeWorkspaceError",
+  {
+    path: TrimmedNonEmptyString,
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}

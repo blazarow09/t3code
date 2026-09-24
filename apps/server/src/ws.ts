@@ -83,6 +83,7 @@ import {
   type ServerProvider,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  FilesystemReadCodeWorkspaceError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   SOURCE_CONTROL_MEDIA_ASSET,
@@ -199,6 +200,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as CodeWorkspaceFile from "./workspace/CodeWorkspaceFile.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -2819,6 +2821,17 @@ export const layerWsRpc = (
                 new FilesystemBrowseError({
                   ...input,
                   ...filesystemBrowseFailureContext(cause),
+                  cause,
+                }),
+            ),
+          ),
+        [WS_METHODS.filesystemReadCodeWorkspace]: (input) =>
+          CodeWorkspaceFile.readCodeWorkspace(input.path).pipe(
+            Effect.mapError(
+              (cause) =>
+                new FilesystemReadCodeWorkspaceError({
+                  path: input.path,
+                  message: cause.message,
                   cause,
                 }),
             ),

@@ -774,6 +774,37 @@ describe("buildThreadActionItems", () => {
       "thread:environment-local:prefix-stale",
     ]);
   });
+
+  it("imports workspace files instead of browsing into them", async () => {
+    const browseTo = vi.fn();
+    const importWorkspaceFile = vi.fn();
+    const groups = buildBrowseGroups({
+      browseEntries: [
+        {
+          name: "scripts.code-workspace",
+          fullPath: "/srv/scripts.code-workspace",
+          kind: "workspaceFile",
+        },
+      ],
+      browseQuery: "/srv/",
+      canBrowseUp: false,
+      upIcon: null,
+      directoryIcon: null,
+      workspaceFileIcon: null,
+      browseUp: vi.fn(),
+      browseTo,
+      importWorkspaceFile,
+    });
+    const item = groups[0]?.items[0];
+    if (!item || item.kind !== "action") {
+      throw new Error("Expected a browse action");
+    }
+
+    await item.run();
+
+    expect(importWorkspaceFile).toHaveBeenCalledWith("/srv/scripts.code-workspace");
+    expect(browseTo).not.toHaveBeenCalled();
+  });
 });
 
 describe("filterPinnedBrowseEntries", () => {

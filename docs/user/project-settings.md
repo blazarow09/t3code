@@ -222,6 +222,18 @@ When no image is found, web and desktop show a two-character monogram with a col
 from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
 
+## Additional folders and workspace files
+
+A project can give Claude, Codex and OpenCode access to folders outside its own folder, such as
+the other roots of a VS Code or Cursor multi-root workspace. On web and desktop, choose
+**Workspace file** when adding a project, then pick a `.code-workspace` file. The project opens
+at the file's folder, and workspace folders outside it become additional folders. Importing the
+same file again refreshes the list.
+
+Edit the list in the project's Project category. Folders belong to one machine, so each checkout
+keeps its own list. Changes apply when an agent session next starts. Diffs and restore points
+cover only the project folder. Other providers see only the project folder.
+
 ## Keep the default branch current
 
 In Source control, enable **Automatically pull** to keep the default-branch checkout up to date

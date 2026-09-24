@@ -45,6 +45,7 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
+import { ProjectAdditionalFoldersSettings } from "./ProjectAdditionalFoldersSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
@@ -562,6 +563,13 @@ function ProjectDetail({
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
+        {group.memberProjects.map((member) => (
+          <ProjectAdditionalFoldersSettings
+            key={member.physicalProjectKey}
+            member={member}
+            showEnvironmentLabel={hasMultipleCheckouts}
+          />
+        ))}
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">
           <SettingsRow

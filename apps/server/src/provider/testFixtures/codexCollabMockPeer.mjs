@@ -122,6 +122,10 @@ rl.on("line", (line) => {
     if (childSnapshot?.hang) {
       return;
     }
+    if (childSnapshot?.errorWithoutTurns && message.params?.excludeTurns === true) {
+      write({ id, error: { code: -32000, message: childSnapshot.errorWithoutTurns } });
+      return;
+    }
     if (childSnapshot?.error) {
       write({ id, error: { code: -32000, message: childSnapshot.error } });
       return;
