@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
@@ -18,14 +19,21 @@ vi.mock("electron", () => ({
 }));
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
+import * as DesktopConfig from "../../app/DesktopConfig.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import type { DesktopSettings } from "../../settings/DesktopAppSettings.ts";
+import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import {
   getLocalEnvironmentBootstraps,
   getRelayTelemetryEnabled,
+  getWindowFullscreenState,
+  pasteAsText,
+  pickFolder,
   pickProjectFavicon,
   probeRemoteEditors,
 } from "./window.ts";
@@ -264,6 +272,64 @@ describe("pickProjectFavicon", () => {
 
       assert.strictEqual(result, null);
       assert.strictEqual(pickFiles.mock.calls.length, 0);
+    }),
+  );
+});
+
+describe("pickFolder", () => {
+  it.effect("picks a single workspace file when asked for one", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/srv/scripts.code-workspace"]));
+      const pickFolderDialog = vi.fn(() => Effect.succeed(Option.some("/srv")));
+      const result = yield* pickFolder
+        .handler({ initialPath: "/srv", codeWorkspaceFile: true })
+        .pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ElectronDialog.ElectronDialog)({
+                pickFiles,
+                pickFolder: pickFolderDialog,
+              }),
+              Layer.mock(ElectronWindow.ElectronWindow)({
+                focusedMainOrFirst: Effect.succeed(Option.none()),
+              }),
+              DesktopEnvironment.layer({
+                dirname: "/app/dist-electron",
+                homeDirectory: "/home/alice",
+                platform: "linux",
+                processArch: "x64",
+                appVersion: "1.2.3",
+                appPath: "/app",
+                isPackaged: true,
+                resourcesPath: "/app/resources",
+                runningUnderArm64Translation: false,
+              }).pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    NodeServices.layer,
+                    NodePath.layerPosix,
+                    DesktopConfig.layerTest({}),
+                  ),
+                ),
+              ),
+              Layer.mock(DesktopWslEnvironment.DesktopWslEnvironment)({}),
+              DesktopAppSettings.layerTest(),
+            ),
+          ),
+        );
+
+      assert.strictEqual(result, "/srv/scripts.code-workspace");
+      assert.strictEqual(pickFolderDialog.mock.calls.length, 0);
+      assert.deepEqual(pickFiles.mock.calls, [
+        [
+          {
+            owner: Option.none(),
+            defaultPath: Option.some("/srv"),
+            multiple: false,
+            filters: [{ name: "Workspace", extensions: ["code-workspace"] }],
+          },
+        ],
+      ]);
     }),
   );
 });

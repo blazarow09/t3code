@@ -204,10 +204,17 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
           ),
         )
       : environment.resolvePickFolderDefaultPath(options);
-    const selectedPath = yield* dialog.pickFolder({
-      owner: yield* electronWindow.focusedMainOrFirst,
-      defaultPath,
-    });
+    const owner = yield* electronWindow.focusedMainOrFirst;
+    const selectedPath = options?.codeWorkspaceFile
+      ? Option.fromNullishOr(
+          (yield* dialog.pickFiles({
+            owner,
+            defaultPath,
+            multiple: false,
+            filters: [{ name: "Workspace", extensions: ["code-workspace"] }],
+          }))[0],
+        )
+      : yield* dialog.pickFolder({ owner, defaultPath });
     if (Option.isNone(selectedPath)) {
       return null;
     }

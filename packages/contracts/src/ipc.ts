@@ -507,11 +507,15 @@ export const DesktopServerExposureStateSchema = Schema.Struct({
 export interface PickFolderOptions {
   initialPath?: string | null;
   targetEnvironmentId?: string;
+  // Pick a VS Code `.code-workspace` file instead of a folder. Older desktop
+  // shells ignore it and open the folder picker.
+  codeWorkspaceFile?: boolean;
 }
 
 export const PickFolderOptionsSchema = Schema.Struct({
   initialPath: Schema.optionalKey(Schema.NullOr(Schema.String)),
   targetEnvironmentId: Schema.optionalKey(Schema.String),
+  codeWorkspaceFile: Schema.optionalKey(Schema.Boolean),
 });
 
 /** Oversized files have empty text so the main process never loads their contents. */

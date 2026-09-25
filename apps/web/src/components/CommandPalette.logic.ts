@@ -226,6 +226,8 @@ export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+  /** Browse view whose native picker selects a `.code-workspace` file, not a folder. */
+  readonly pickCodeWorkspaceFile?: boolean;
 }
 
 // Child search unmounts the palette; retain search data without its view closures.
