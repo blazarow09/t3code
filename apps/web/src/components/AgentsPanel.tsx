@@ -25,7 +25,15 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SubagentTranscriptEntry } from "@t3tools/client-runtime/state/subagentRuntime";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { createContext, use, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { ChatMarkdownAssetImage } from "~/components/ChatMarkdown";
 import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
@@ -883,6 +891,7 @@ export function AgentsPanel({
   workspaceRoot = null,
   agentToolActivity,
   onImageExpand,
+  visible = true,
 }: {
   model: AgentPanelModel;
   environmentId?: EnvironmentId | null;
@@ -890,7 +899,77 @@ export function AgentsPanel({
   workspaceRoot?: string | null;
   agentToolActivity?: AgentToolActivityByAgent | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  visible?: boolean;
 }) {
+  const scrollRootRef = useRef<HTMLDivElement>(null);
+  const scrollContentRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!visible || !model.hasAgents) return;
+    const root = scrollRootRef.current;
+    const content = scrollContentRef.current;
+    const viewport = root?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]');
+    if (!root || !content || !viewport) return;
+
+    let followingEnd = true;
+    let userScrollIntent = false;
+    const atEnd = () => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
+    const pinToEnd = () => {
+      if (followingEnd) viewport.scrollTop = viewport.scrollHeight;
+    };
+    const onScroll = () => {
+      if (atEnd()) {
+        followingEnd = true;
+        userScrollIntent = false;
+      } else if (userScrollIntent) {
+        followingEnd = false;
+      }
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0 && viewport.scrollTop > 1) {
+        followingEnd = false;
+        userScrollIntent = true;
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (["ArrowUp", "PageUp", "Home"].includes(event.key) && viewport.scrollTop > 1) {
+        followingEnd = false;
+        userScrollIntent = true;
+      }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        event.target === viewport ||
+        (event.target instanceof Element &&
+          event.target.closest('[data-slot="scroll-area-scrollbar"]'))
+      ) {
+        userScrollIntent = true;
+      }
+    };
+    const onTouchStart = () => {
+      userScrollIntent = true;
+    };
+
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    viewport.addEventListener("wheel", onWheel, { passive: true });
+    viewport.addEventListener("keydown", onKeyDown);
+    viewport.addEventListener("touchstart", onTouchStart, { passive: true });
+    root.addEventListener("pointerdown", onPointerDown, { passive: true });
+    const observer = new ResizeObserver(pinToEnd);
+    observer.observe(viewport);
+    observer.observe(content);
+    pinToEnd();
+
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener("scroll", onScroll);
+      viewport.removeEventListener("wheel", onWheel);
+      viewport.removeEventListener("keydown", onKeyDown);
+      viewport.removeEventListener("touchstart", onTouchStart);
+      root.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [visible, model.hasAgents]);
+
   if (!model.hasAgents) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
@@ -909,8 +988,8 @@ export function AgentsPanel({
       value={{ environmentId, threadId, workspaceRoot, onImageExpand }}
     >
       <div className="flex h-full min-h-0 flex-col">
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-2 p-2">
+        <ScrollArea ref={scrollRootRef} className="min-h-0 flex-1">
+          <div ref={scrollContentRef} className="flex flex-col gap-2 p-2">
             {model.workflows.map((group) => (
               <WorkflowSection
                 key={group.workflow.id}
