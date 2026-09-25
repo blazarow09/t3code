@@ -3,17 +3,19 @@ import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 /** Checkout the custom sync skill and its helper script operate on. */
 export const CUSTOM_SYNC_REPO_ROOT = "D:\\Projects\\t3code";
 
-/** OpenCode slug whose catalog name is DeepSeek V4.1 Flash. */
-export const CUSTOM_SYNC_MODEL_SLUG = "deepseek/deepseek-flash";
+/** Codex model and effort used for custom sync chats. */
+export const CUSTOM_SYNC_MODEL_SLUG = "gpt-6-sol";
 
-export const CUSTOM_SYNC_MODEL_LABEL = "DeepSeek V4.1 Flash";
+export const CUSTOM_SYNC_MODEL_LABEL = "GPT-6 Sol (medium)";
+
+export const CUSTOM_SYNC_MODEL_OPTIONS = [{ id: "reasoningEffort", value: "medium" }] as const;
 
 export const CUSTOM_SYNC_SKILL_NAME = "t3code-custom-sync";
 
 export const CUSTOM_SYNC_THREAD_TITLE = "Sync custom build";
 
 /**
- * Composer skill mentions are `$name`. OpenCode loads the skill from that
+ * Composer skill mentions are `$name`. Codex loads the skill from that
  * token. The rest of the message is the job: rebase, keep custom changes,
  * and stop once the installer exists.
  */
@@ -54,18 +56,14 @@ export function selectCustomSyncProject<T extends CustomSyncProjectCandidate>(
 export function selectCustomSyncProvider<T extends CustomSyncProviderCandidate>(
   providers: ReadonlyArray<T>,
 ): T | null {
-  const ready = providers.filter(
-    (provider) =>
-      provider.driver === "opencode" &&
-      provider.enabled &&
-      provider.installed &&
-      provider.availability !== "unavailable",
-  );
   return (
-    ready.find((provider) =>
-      provider.models.some((model) => model.slug === CUSTOM_SYNC_MODEL_SLUG),
-    ) ??
-    ready[0] ??
-    null
+    providers.find(
+      (provider) =>
+        provider.driver === "codex" &&
+        provider.enabled &&
+        provider.installed &&
+        provider.availability !== "unavailable" &&
+        provider.models.some((model) => model.slug === CUSTOM_SYNC_MODEL_SLUG),
+    ) ?? null
   );
 }

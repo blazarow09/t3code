@@ -80,7 +80,7 @@ function CustomSyncSummary({
           {syncPending ? "Starting…" : "Sync and build"}
         </button>
         <div className="mt-1.5 text-xs leading-4 text-muted-foreground">
-          Starts a new chat on DeepSeek V4.1 Flash. It builds an installer and does not install it.
+          Starts a new chat on GPT-6 Sol (medium). It builds an installer and does not install it.
         </div>
       </div>
       {note && note.items.length > 0 ? (

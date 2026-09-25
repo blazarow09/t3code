@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   CUSTOM_SYNC_MODEL_SLUG,
+  CUSTOM_SYNC_MODEL_OPTIONS,
   CUSTOM_SYNC_PROMPT,
   CUSTOM_SYNC_SKILL_NAME,
   selectCustomSyncProject,
@@ -34,40 +35,44 @@ describe("selectCustomSyncProject", () => {
 });
 
 describe("selectCustomSyncProvider", () => {
-  const cursor = {
-    instanceId: "cursor",
-    driver: "cursor",
+  const otherProvider = {
+    instanceId: "opencode",
+    driver: "opencode",
     enabled: true,
     installed: true,
     models: [{ slug: CUSTOM_SYNC_MODEL_SLUG }],
   };
-  const opencode = {
-    instanceId: "opencode",
-    driver: "opencode",
+  const codex = {
+    instanceId: "codex",
+    driver: "codex",
     enabled: true,
     installed: true,
     models: [] as Array<{ slug: string }>,
   };
 
-  it("prefers the OpenCode instance that lists DeepSeek V4.1 Flash", () => {
+  it("selects Codex only when GPT-6 Sol is available", () => {
     const listed = {
-      ...opencode,
-      instanceId: "opencode-deepseek",
+      ...codex,
+      instanceId: "codex-sol",
       models: [{ slug: CUSTOM_SYNC_MODEL_SLUG }],
     };
-    expect(selectCustomSyncProvider([cursor, opencode, listed])?.instanceId).toBe(
-      "opencode-deepseek",
-    );
+    expect(selectCustomSyncProvider([otherProvider, codex, listed])?.instanceId).toBe("codex-sol");
   });
 
-  it("falls back to any ready OpenCode instance", () => {
+  it("does not start with a different model or provider", () => {
+    expect(selectCustomSyncProvider([otherProvider, codex])).toBeNull();
+  });
+
+  it("skips an unavailable Codex instance", () => {
     expect(
-      selectCustomSyncProvider([cursor, { ...opencode, enabled: false }, opencode])?.instanceId,
-    ).toBe("opencode");
+      selectCustomSyncProvider([
+        { ...codex, models: [{ slug: CUSTOM_SYNC_MODEL_SLUG }], availability: "unavailable" },
+      ]),
+    ).toBeNull();
   });
 
-  it("skips an unavailable OpenCode instance", () => {
-    expect(selectCustomSyncProvider([{ ...opencode, availability: "unavailable" }])).toBeNull();
+  it("pins medium reasoning effort", () => {
+    expect(CUSTOM_SYNC_MODEL_OPTIONS).toEqual([{ id: "reasoningEffort", value: "medium" }]);
   });
 });
 

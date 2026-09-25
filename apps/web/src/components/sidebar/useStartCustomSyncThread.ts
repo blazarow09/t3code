@@ -27,6 +27,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   CUSTOM_SYNC_MODEL_LABEL,
+  CUSTOM_SYNC_MODEL_OPTIONS,
   CUSTOM_SYNC_MODEL_SLUG,
   CUSTOM_SYNC_PROMPT,
   CUSTOM_SYNC_REPO_ROOT,
@@ -84,8 +85,8 @@ export function useStartCustomSyncThread() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "OpenCode is not available",
-            description: `${CUSTOM_SYNC_MODEL_LABEL} runs through OpenCode.`,
+            title: "Codex model is not available",
+            description: `${CUSTOM_SYNC_MODEL_LABEL} requires an available Codex provider.`,
           }),
         );
         return false;
@@ -97,6 +98,7 @@ export function useStartCustomSyncThread() {
       const modelSelection = createModelSelection(
         ProviderInstanceId.make(provider.instanceId),
         CUSTOM_SYNC_MODEL_SLUG,
+        CUSTOM_SYNC_MODEL_OPTIONS,
       );
       const createResult = await createThread({
         environmentId,
