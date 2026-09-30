@@ -531,8 +531,50 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 // uses "none". Explorer needs its /select argument passed verbatim through
 // PowerShell because Node's argument quoting changes how Explorer parses it.
 function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
+  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { ${buildFileExplorerRevealPowerShellSource(target)} }`;
+}
+
+/**
+ * PowerShell source that selects `target` in File Explorer.
+ *
+ * `Start-Process explorer.exe /select` goes through ShellExecute. The desktop
+ * app starts the server with `windowsHide`, and ShellExecute from that process
+ * returns success without ever showing a window. `SHOpenFolderAndSelectItems`
+ * opens the folder from the same hidden process. The path stays inside a
+ * PowerShell string, so spaces, apostrophes, and characters such as `[` are
+ * literal — Explorer's `/select` switch misparses those when Node quotes the
+ * argument.
+ *
+ * Exported so the Windows smoke test can drive the identical source through a
+ * real PowerShell.
+ */
+export function buildFileExplorerRevealPowerShellSource(target: string): string {
   const literal = escapePowerShellStringLiteral(target);
-  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+  return `$ProgressPreference = 'SilentlyContinue'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class T3FileExplorerReveal {
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+  public static extern IntPtr ILCreateFromPath(string pszPath);
+  [DllImport("shell32.dll")]
+  public static extern int SHOpenFolderAndSelectItems(IntPtr pidlFolder, uint cidl, IntPtr[] apidl, uint dwFlags);
+  [DllImport("shell32.dll")]
+  public static extern void ILFree(IntPtr pidl);
+}
+'@
+$target = ${literal}
+$pidl = [T3FileExplorerReveal]::ILCreateFromPath($target)
+if ($pidl -eq [IntPtr]::Zero) {
+  $parent = Split-Path -LiteralPath $target -Parent
+  if ([string]::IsNullOrEmpty($parent)) { exit 1 }
+  $pidl = [T3FileExplorerReveal]::ILCreateFromPath($parent)
+  if ($pidl -eq [IntPtr]::Zero) { exit 1 }
+}
+$hr = [T3FileExplorerReveal]::SHOpenFolderAndSelectItems($pidl, 0, $null, 0)
+[T3FileExplorerReveal]::ILFree($pidl)
+if ($hr -ne 0) { exit 1 }
+`;
 }
 
 function powerShellFileManagerLaunch(
