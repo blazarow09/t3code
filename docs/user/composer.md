@@ -104,6 +104,23 @@ instance:
   }
 }
 ```
+## Prompt suggestions
+
+Prompt suggestions are off by default. To suggest a follow-up after a turn finishes,
+enable **Settings → Providers → Prompt suggestions**, then choose a suggestion model
+and enable suggestions on each provider instance you want to use. Codex, Claude,
+and Antigravity support suggestions. The model must be available on that instance;
+it is independent of the model used for coding. Reasoning effort starts at Low
+when the selected model supports it.
+
+On mobile, enable suggestions in **Settings → Agent behavior** and configure each
+provider under its environment's settings. Turning off the environment switch
+stops suggestions for every provider there.
+
+Suggestions use a short request on the thread's provider account and count toward
+its usage. They appear only when the composer is empty after a recent successful
+turn. Press Tab or click a suggestion on web and desktop, or tap **Use suggestion**
+on mobile, to put it in your draft without sending it. Typing dismisses it.
 
 ## Model defaults
 

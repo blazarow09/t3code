@@ -769,6 +769,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "prompt-suggestions",
+    title: "Prompt suggestions",
+    to: "/settings/providers",
+    searchTerms: ["follow up next prompt suggestion model reasoning effort"],
+    providerSettingsOnly: true,
+    scope: "environment",
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",

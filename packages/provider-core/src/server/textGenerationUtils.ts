@@ -7,6 +7,25 @@ const decodeJsonThreadTitle = Schema.decodeOption(
   Schema.fromJsonString(Schema.Struct({ title: Schema.String })),
 );
 
+/** Discard unusable suggestions rather than showing a truncated or generic prompt. */
+export function sanitizePromptSuggestion(raw: string | null): string | null {
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  if (!trimmed || /[\r\n]/.test(trimmed)) return null;
+  const suggestion = trimmed.replace(/\s+/g, " ");
+  if (suggestion.length > 240 || suggestion.split(" ").length > 30) return null;
+  const plain = suggestion.toLowerCase().replace(/[.!?]+$/g, "");
+  if (
+    /^(?:please )?(?:continue|go on|proceed|tell me more|what(?:'s| is)? next|what should (?:i|we) do next|keep going|sounds good|thanks|thank you)$/.test(
+      plain,
+    )
+  ) {
+    return null;
+  }
+  return suggestion;
+}
+
+/** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
 export function toJsonSchemaObject(schema: Schema.Top): unknown {
   const document = Schema.toJsonSchemaDocument(Schema.toType(schema), {
     onExcessProperty: "error",

@@ -21,6 +21,75 @@ import {
   resolveSourceControlWriterModelSelection,
 } from "./serverSettings.ts";
 
+describe("prompt suggestion settings patches", () => {
+  it("enables and disables suggestions without clearing provider choices or coding defaults", () => {
+    const workId = ProviderInstanceId.make("codex_work");
+    const personalId = ProviderInstanceId.make("codex_personal");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [workId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { homePath: "work-home" },
+          promptSuggestions: { enabled: true, model: "small-work-model", reasoningEffort: "low" },
+        },
+        [personalId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { homePath: "personal-home" },
+          promptSuggestions: { enabled: false, model: "small-personal-model" },
+        },
+      },
+    };
+    const enabled = applyServerSettingsPatch(current, { promptSuggestionsEnabled: true });
+    const disabled = applyServerSettingsPatch(enabled, { promptSuggestionsEnabled: false });
+    expect(enabled.promptSuggestionsEnabled).toBe(true);
+    expect(disabled.promptSuggestionsEnabled).toBe(false);
+    expect(disabled.providerInstances).toEqual(current.providerInstances);
+    expect(disabled.textGenerationModelSelection).toEqual(current.textGenerationModelSelection);
+    expect(current.promptSuggestionsEnabled).toBe(false);
+  });
+
+  it("stores a disabled instance choice while preserving the complete supplied instance map", () => {
+    const workId = ProviderInstanceId.make("codex_work");
+    const personalId = ProviderInstanceId.make("codex_personal");
+    const workInstance = {
+      driver: ProviderDriverKind.make("codex"),
+      displayName: "Work",
+      config: { homePath: "work-home" },
+      promptSuggestions: { enabled: true, model: "small-work-model", reasoningEffort: "low" },
+    };
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      promptSuggestionsEnabled: true,
+      providerInstances: {
+        [workId]: workInstance,
+        [personalId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { homePath: "personal-home" },
+          promptSuggestions: { enabled: true, model: "small-personal-model" },
+        },
+      },
+    };
+    const updated = applyServerSettingsPatch(current, {
+      providerInstances: {
+        ...current.providerInstances,
+        [workId]: {
+          ...workInstance,
+          promptSuggestions: { enabled: false, model: "small-work-model", reasoningEffort: "low" },
+        },
+      },
+    });
+    expect(updated.promptSuggestionsEnabled).toBe(true);
+    expect(updated.providerInstances[workId]).toEqual({
+      ...current.providerInstances[workId],
+      promptSuggestions: { enabled: false, model: "small-work-model", reasoningEffort: "low" },
+    });
+    expect(updated.providerInstances[personalId]).toEqual(current.providerInstances[personalId]);
+    expect(current.providerInstances[workId]?.promptSuggestions.enabled).toBe(true);
+  });
+});
+
+/** Settings after the server has folded legacy per-project fields into `projectSettingsOverrides`. */
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("fallbackTextGenerationModelSelection", () => {

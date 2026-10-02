@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ProviderInstanceId } from "@t3tools/contracts";
+import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
 
@@ -23,16 +23,36 @@ export type {
   ThreadTitleGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
-  "t3/textGeneration/TextGeneration",
-) {}
+export interface PromptSuggestionGenerationInput {
+  cwd: string;
+  userMessage: string;
+  assistantMessage: string;
+  modelSelection: ModelSelection;
+}
+
+export interface PromptSuggestionGenerationResult {
+  suggestion: string | null;
+}
+
+/**
+ * TextGeneration - Service tag for commit and change request text generation.
+ */
+export class TextGeneration extends Context.Service<
+  TextGeneration,
+  ProviderTextGeneration & {
+    readonly generatePromptSuggestion: (
+      input: PromptSuggestionGenerationInput,
+    ) => Effect.Effect<PromptSuggestionGenerationResult, TextGenerationError>;
+  }
+>()("t3/textGeneration/TextGeneration") {}
 
 type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateReviewGuide";
+  | "generateReviewGuide"
+  | "generatePromptSuggestion";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -77,6 +97,11 @@ export const make = Effect.gen(function* () {
     generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function (input) {
       return resolveInstance(registry, "generateReviewGuide", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateReviewGuide(input)),
+      );
+    }),
+    generatePromptSuggestion: Effect.fn("TextGeneration.generatePromptSuggestion")(function (input) {
+      return resolveInstance(registry, "generatePromptSuggestion", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generatePromptSuggestion(input)),
       );
     }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {

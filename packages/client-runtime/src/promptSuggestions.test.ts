@@ -1,0 +1,179 @@
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import { createPromptSuggestionLifecycle, promptSuggestionContext } from "./promptSuggestions.ts";
+
+function fixture() {
+  return {
+    environmentId: EnvironmentId.make("environment-1"),
+    thread: {
+      id: ThreadId.make("thread-1"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "completed" as const,
+        requestedAt: "2026-10-01T12:00:00Z",
+        startedAt: "2026-10-01T12:00:00Z",
+        completedAt: "2026-10-01T12:01:00Z",
+        assistantMessageId: null,
+      },
+      latestUserMessageAt: "2026-10-01T12:00:00Z",
+      session: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+    },
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      promptSuggestionsEnabled: true,
+      providerInstances: {
+        codex: {
+          driver: "codex",
+          config: {},
+          promptSuggestions: { enabled: true, model: "gpt-5-mini", reasoningEffort: "low" },
+        },
+      },
+    },
+    available: true,
+    draftEmpty: true,
+    blocked: false,
+  };
+}
+
+describe("prompt suggestion eligibility", () => {
+  it("requires the global preference and an enabled provider configuration", () => {
+    const input = fixture();
+    expect(promptSuggestionContext(input)).not.toBeNull();
+    expect(promptSuggestionContext({ ...input, settings: DEFAULT_SERVER_SETTINGS })).toBeNull();
+    input.settings.promptSuggestionsEnabled = false;
+    expect(promptSuggestionContext(input)).toBeNull();
+    input.settings.promptSuggestionsEnabled = true;
+    input.settings.providerInstances.codex.promptSuggestions.enabled = false;
+    expect(promptSuggestionContext(input)).toBeNull();
+  });
+
+  it.each([{ available: false }, { draftEmpty: false }, { blocked: true }])(
+    "suppresses requests for an unavailable or occupied composer: %j",
+    (override) => {
+      expect(promptSuggestionContext({ ...fixture(), ...override })).toBeNull();
+    },
+  );
+
+  it("does not suggest for a previous turn while a newer user message awaits dispatch", () => {
+    const input = fixture();
+    input.thread.latestUserMessageAt = "2026-10-01T12:02:00Z";
+    expect(promptSuggestionContext(input)).toBeNull();
+  });
+
+  it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
+    "suppresses a raised hand before its detail loads: %s",
+    (key) => {
+      const input = fixture();
+      input.thread[key] = true;
+      expect(promptSuggestionContext(input)).toBeNull();
+    },
+  );
+
+  it.each(["running", "interrupted", "error"] as const)(
+    "requires a successful completion, not %s",
+    (state) => {
+      const input = fixture();
+      expect(
+        promptSuggestionContext({
+          ...input,
+          thread: { ...input.thread, latestTurn: { ...input.thread.latestTurn, state } },
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("changes the context when the generation settings change", () => {
+    const input = fixture();
+    const before = promptSuggestionContext(input);
+    input.settings.providerInstances.codex.promptSuggestions.reasoningEffort = "high";
+    const after = promptSuggestionContext(input);
+    expect(after?.turnKey).toBe(before?.turnKey);
+    expect(after?.key).not.toBe(before?.key);
+  });
+});
+
+describe("prompt suggestion lifecycle", () => {
+  it("consumes a turn once, including across remounts and failed requests", () => {
+    const consumed = new Set<string>();
+    const context = promptSuggestionContext(fixture());
+    const lifecycle = createPromptSuggestionLifecycle(consumed);
+    lifecycle.update(context);
+    const ticket = lifecycle.begin()!;
+    expect(lifecycle.begin()).toBeNull();
+    lifecycle.resolve(ticket, null);
+    const remounted = createPromptSuggestionLifecycle(consumed);
+    remounted.update(context);
+    expect(remounted.begin()).toBeNull();
+  });
+
+  it("discards a late response after typing, even if the draft is cleared again", async () => {
+    const lifecycle = createPromptSuggestionLifecycle(new Set());
+    const context = promptSuggestionContext(fixture());
+    lifecycle.update(context);
+    const ticket = lifecycle.begin()!;
+    const response = Promise.resolve("Add focused tests");
+    lifecycle.update(null);
+    lifecycle.update(context);
+    expect(lifecycle.resolve(ticket, await response)).toBe(false);
+    expect(lifecycle.read(context)).toBeNull();
+    expect(lifecycle.begin()).toBeNull();
+  });
+
+  it.each(["thread", "turn", "environment", "settings"])(
+    "ignores a response after a %s change",
+    (change) => {
+      const lifecycle = createPromptSuggestionLifecycle(new Set());
+      const input = fixture();
+      const oldContext = promptSuggestionContext(input);
+      lifecycle.update(oldContext);
+      const oldTicket = lifecycle.begin()!;
+      if (change === "thread") input.thread.id = ThreadId.make("thread-2");
+      if (change === "turn") input.thread.latestTurn.turnId = TurnId.make("turn-2");
+      if (change === "environment") input.environmentId = EnvironmentId.make("environment-2");
+      if (change === "settings")
+        input.settings.providerInstances.codex.promptSuggestions.model = "gpt-5-nano";
+      const newContext = promptSuggestionContext(input);
+      expect(lifecycle.read(newContext)).toBeNull();
+      lifecycle.update(newContext);
+      expect(lifecycle.resolve(oldTicket, "Old suggestion")).toBe(false);
+      expect(lifecycle.read(newContext)).toBeNull();
+      if (change !== "settings") {
+        const newTicket = lifecycle.begin()!;
+        expect(lifecycle.resolve(newTicket, "New suggestion")).toBe(true);
+        expect(lifecycle.read(newContext)).toBe("New suggestion");
+      } else {
+        expect(lifecycle.begin()).toBeNull();
+      }
+    },
+  );
+
+  it("dismisses both pending and visible suggestions without regenerating", () => {
+    const lifecycle = createPromptSuggestionLifecycle(new Set());
+    const input = fixture();
+    let context = promptSuggestionContext(input);
+    lifecycle.update(context);
+    const pendingTicket = lifecycle.begin()!;
+    lifecycle.dismiss();
+    expect(lifecycle.resolve(pendingTicket, "Ignored")).toBe(false);
+    expect(lifecycle.read(context)).toBeNull();
+    expect(lifecycle.begin()).toBeNull();
+    input.thread.latestTurn.turnId = TurnId.make("turn-2");
+    context = promptSuggestionContext(input);
+    lifecycle.update(context);
+    lifecycle.resolve(lifecycle.begin()!, "Visible");
+    expect(lifecycle.read(context)).toBe("Visible");
+    lifecycle.dismiss();
+    expect(lifecycle.read(context)).toBeNull();
+    expect(lifecycle.begin()).toBeNull();
+  });
+});

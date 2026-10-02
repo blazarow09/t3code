@@ -45,6 +45,13 @@ export const ProviderInstanceConfig = Schema.Struct({
   accentColor: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
+  promptSuggestions: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.Boolean,
+      model: TrimmedNonEmptyString,
+      reasoningEffort: Schema.optionalKey(TrimmedNonEmptyString),
+    }),
+  ),
   config: Schema.optionalKey(Schema.Unknown),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;

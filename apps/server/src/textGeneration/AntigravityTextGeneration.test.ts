@@ -278,6 +278,45 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 });
 
 it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
+  it.effect("generates a bounded suggestion in an empty workspace and removes its session", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        outputs: ['{"suggestion":"Test the remote Google login callback."}'],
+      });
+      const result = yield* fixture.textGeneration.generatePromptSuggestion({
+        cwd: fixture.projectDirectory,
+        userMessage: "Fix remote login",
+        assistantMessage: "Fixed. The remote callback still needs coverage.",
+        modelSelection,
+      });
+      expect(result).toEqual({ suggestion: "Test the remote Google login callback." });
+      expect(fixture.state.workspaces).not.toContain(fixture.projectDirectory);
+      expect(fixture.state.prompts).toHaveLength(1);
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("cancels suggestions at the short timeout without retrying", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({ prompt: () => Effect.never });
+      const child = yield* fixture.textGeneration
+        .generatePromptSuggestion({
+          cwd: fixture.projectDirectory,
+          userMessage: "Fix login",
+          assistantMessage: "Review the callback.",
+          modelSelection,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(fixture.enteredPrompt);
+      yield* TestClock.adjust(15_000);
+      const error = yield* Fiber.join(child).pipe(Effect.flip);
+      expect(error.detail).toContain("timed out");
+      expect(fixture.state.prompts).toHaveLength(1);
+      expect(fixture.state.cancellations).toBe(1);
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "generates all helper types in empty workspaces and removes only owned session files",
     () =>

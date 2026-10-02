@@ -76,6 +76,7 @@ import {
 } from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import {
   Empty,
   EmptyContent,
@@ -356,6 +357,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     } else if (
       !target.scoped &&
       (searchTargetId === searchableSetting("provider-health-check-interval").id ||
+        searchTargetId === searchableSetting("prompt-suggestions").id ||
         searchTargetId === searchableSetting("usage-providers").id) &&
       !selectedEnvironmentCanRenderSettings &&
       searchableEnvironmentId !== undefined
@@ -1067,6 +1069,21 @@ export function EnvironmentProviderSettings({
             )}
           </div>
         </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection {...searchableSetting("prompt-suggestions")}>
+        <SettingsRow
+          title="Prompt suggestions"
+          description="Suggest a follow-up after a turn finishes. Configure a suggestion model on each provider you want to use."
+          control={
+            <Switch
+              aria-label="Prompt suggestions"
+              checked={settings.promptSuggestionsEnabled}
+              disabled={readOnly}
+              onCheckedChange={(enabled) => updateSettings({ promptSuggestionsEnabled: enabled })}
+            />
+          }
+        />
       </SettingsSection>
 
       <UsageProviderSettings
