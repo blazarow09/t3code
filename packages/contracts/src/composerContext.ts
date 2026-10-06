@@ -29,7 +29,7 @@ export const COMPOSER_CONTEXT_KINDS = [
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
 const CONTEXT_ID_MAX_CHARS = 128;
-const CONTEXT_ID_PATTERN = /^[a-z0-9_-]+$/i;
+const CONTEXT_ID_PATTERN = /^[a-z0-9_.:-]+$/i;
 const CONTEXT_KIND_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
 const KNOWN_KIND_PATTERN = new RegExp(`^(?!(?:${COMPOSER_CONTEXT_KINDS.join("|")})$)`);
 

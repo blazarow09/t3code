@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type { ProviderInstanceId } from "@t3tools/contracts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
 
@@ -19,32 +19,18 @@ export type {
   PrContentGenerationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
+  PromptSuggestionGenerationInput,
+  PromptSuggestionGenerationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-export interface PromptSuggestionGenerationInput {
-  cwd: string;
-  userMessage: string;
-  assistantMessage: string;
-  modelSelection: ModelSelection;
-}
-
-export interface PromptSuggestionGenerationResult {
-  suggestion: string | null;
-}
-
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
-export class TextGeneration extends Context.Service<
-  TextGeneration,
-  ProviderTextGeneration & {
-    readonly generatePromptSuggestion: (
-      input: PromptSuggestionGenerationInput,
-    ) => Effect.Effect<PromptSuggestionGenerationResult, TextGenerationError>;
-  }
->()("t3/textGeneration/TextGeneration") {}
+export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
+  "t3/textGeneration/TextGeneration",
+) {}
 
 type TextGenerationOp =
   | "generateCommitMessage"

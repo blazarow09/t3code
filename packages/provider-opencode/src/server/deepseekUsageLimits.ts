@@ -154,7 +154,11 @@ export const resolveDeepSeekApiKey = Effect.fn("resolveDeepSeekApiKey")(function
     const raw = yield* fileSystem.readFileString(candidate).pipe(Effect.orElseSucceed(() => ""));
     if (!raw.trim()) continue;
     try {
-      const key = deepseekApiKeyFromAuthStore(JSON.parse(raw) as unknown);
+      const key = deepseekApiKeyFromAuthStore(
+        yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(raw).pipe(
+          Effect.orElseSucceed(() => undefined),
+        ),
+      );
       if (key) return key;
     } catch {
       // Unreadable store is the same as a missing key.

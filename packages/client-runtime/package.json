@@ -307,6 +307,10 @@
       "types": "./src/state/subagentDisplay.ts",
       "default": "./src/state/subagentDisplay.ts"
     },
+    "./prompt-suggestions": {
+      "types": "./src/promptSuggestions.ts",
+      "default": "./src/promptSuggestions.ts"
+    },
     "./state/subagentRuntime": {
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"

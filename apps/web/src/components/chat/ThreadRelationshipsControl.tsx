@@ -1,4 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
+import { ExpandedImageDialog } from "./ExpandedImageDialog";
+import { expandedImageKey, type ExpandedImagePreview } from "./ExpandedImagePreview";
+import { AgentsPanel } from "../AgentsPanel";
+import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
+import { Button } from "../ui/button";
+import { deriveAgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -292,6 +298,8 @@ export function ThreadRelationshipsPanel(props: {
   readonly threadId: ThreadId;
 }) {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
+  const [agentsOpen, setAgentsOpen] = useState(false);
+  const [expandedAgentImage, setExpandedAgentImage] = useState<ExpandedImagePreview | null>(null);
   const projection = useThreadProjection(ref)?.projection ?? null;
   const providersByEnvironment = useEnvironmentProviders();
   const relationshipShells = useThreadRelationshipShells(ref);
@@ -416,6 +424,9 @@ export function ThreadRelationshipsPanel(props: {
     return null;
   }
 
+  const agentPanelModel = deriveAgentPanelModel({
+    agents: projectedSubagentsToRuntime(projection?.subagents ?? []),
+  });
   const openThread = (threadId: ThreadId) => {
     void navigate({
       to: "/$environmentId/$threadId",

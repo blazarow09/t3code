@@ -683,7 +683,9 @@ function ThreadWorkGroupList(props: {
     return unsubscribe;
   }, []);
   const getFixedItemSize = (row: ThreadFeedActivity, index: number) =>
-    props.expandedRows[row.id] || props.rowSizing.fixedRowHeight === undefined
+    props.expandedRows[row.id] ||
+    workEntryViewedImagePath(row.workEntry) !== null ||
+    props.rowSizing.fixedRowHeight === undefined
       ? undefined
       : props.rowSizing.fixedRowHeight + (index < props.activities.length - 1 ? WORK_ROW_GAP : 0);
   const renderItem = ({ item, index }: { item: ThreadFeedActivity; index: number }) => (

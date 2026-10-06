@@ -283,9 +283,9 @@ export interface DesktopUpdateState {
   canRetry: boolean;
   notAppliedVersion?: string;
   /** Custom fork only: drift is measured against a local checkout, not a feed. */
-  customSync?: boolean;
+  customSync?: boolean | undefined;
   /** Custom fork only: commits `upstream/main` has that this build does not. */
-  syncBehind?: number;
+  syncBehind?: number | undefined;
 }
 
 export interface DesktopUpdateReleaseNote {

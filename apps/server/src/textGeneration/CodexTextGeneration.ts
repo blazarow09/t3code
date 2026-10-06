@@ -24,6 +24,10 @@ import {
   normalizeCliError,
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
+import {
+  PROMPT_SUGGESTION_SYSTEM_PROMPT,
+  PROMPT_SUGGESTION_TIMEOUT_MS,
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -223,6 +227,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     TextGenerationError,
     S["DecodingServices"]
   > {
+    const suggestion = operation === "generatePromptSuggestion";
     const imagePaths = yield* materializeImageAttachments(attachments);
     const schemaJson = yield* encodeJsonForOperation(
       operation,
@@ -232,6 +237,17 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     const outputPath = yield* writeTempFile(operation, "codex-output", "").pipe(
       Effect.onError(() => removeTempFileDir(schemaPath)),
     );
+
+    const instructionsPath = suggestion
+      ? yield* writeTempFile(
+          operation,
+          "codex-suggestion-instructions",
+          PROMPT_SUGGESTION_SYSTEM_PROMPT,
+        )
+      : undefined;
+    const instructionsConfig = instructionsPath
+      ? yield* encodeJsonForOperation(operation, instructionsPath)
+      : undefined;
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
       const resolved = resolveRuntime
@@ -252,6 +268,20 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         )?.slug ??
         requestedModel;
       const launchArgs = resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment);
+      const workingDirectory = suggestion
+        ? yield* fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3code-codex-suggestion-" })
+            .pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError(
+                  "codex",
+                  operation,
+                  cause,
+                  "Failed to create suggestion directory",
+                ),
+              ),
+            )
+        : cwd;
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
@@ -284,6 +314,42 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
           ...(mcpServersOff ? ["--config", mcpServersOff] : []),
+          ...(suggestion
+            ? [
+                "--ignore-rules",
+                "--config",
+                "project_doc_max_bytes=0",
+                "--config",
+                `model_instructions_file=${instructionsConfig}`,
+                "--config",
+                'developer_instructions=""',
+                "--config",
+                'web_search="disabled"',
+                "--config",
+                "mcp_servers={}",
+                "--config",
+                "features.skip_host_skill_discovery=true",
+                ...[
+                  "shell_tool",
+                  "unified_exec",
+                  "shell_snapshot",
+                  "multi_agent",
+                  "multi_agent_v2",
+                  "apps",
+                  "plugins",
+                  "hooks",
+                  "memories",
+                  "goals",
+                  "browser_use",
+                  "computer_use",
+                  "image_generation",
+                  "view_image",
+                  "code_mode_host",
+                  "sleep_tool",
+                  "skill_search",
+                ].flatMap((feature) => ["--config", `features.${feature}=false`]),
+              ]
+            : []),
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",
@@ -304,7 +370,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env,
-        cwd,
+        cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
@@ -347,14 +413,22 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       }
     });
 
-    const cleanup = Effect.all([removeTempFileDir(schemaPath), removeTempFileDir(outputPath)], {
-      concurrency: "unbounded",
-    }).pipe(Effect.asVoid);
+    const cleanup = Effect.all(
+      [
+        removeTempFileDir(schemaPath),
+        removeTempFileDir(outputPath),
+        ...(instructionsPath ? [removeTempFileDir(instructionsPath)] : []),
+      ],
+      {
+        concurrency: "unbounded",
+      },
+    ).pipe(Effect.asVoid);
 
     return yield* Effect.gen(function* () {
       yield* runCodexCommand().pipe(
         Effect.scoped,
-        Effect.timeoutOption(investigate?.timeoutMs ?? CODEX_TIMEOUT_MS),
+        // The read-only sandbox already holds an investigation to reading; it only needs longer.
+        Effect.timeoutOption(investigate?.timeoutMs ?? (suggestion ? PROMPT_SUGGESTION_TIMEOUT_MS : CODEX_TIMEOUT_MS)),
         Effect.flatMap(
           Option.match({
             onNone: () =>

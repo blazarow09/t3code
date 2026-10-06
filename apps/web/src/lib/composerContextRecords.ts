@@ -206,10 +206,9 @@ export function threadReferenceIsRepresentable(threadId: string): boolean {
   return toComposerContextId(threadId) === threadId;
 }
 
-export function threadContextReference(input: {
-  threadId: ThreadId;
-  title: string;
-}): ComposerContextReference {
+export function threadContextReference(
+  input: { threadId: ThreadId; title: string } | ThreadContextRecord,
+): ComposerContextReference {
   return {
     kind: "thread",
     contextId: threadContextId(input.threadId),
@@ -222,7 +221,10 @@ export function threadContextReference(input: {
  * draft state: the id is in the link and the title is its label, so the send boundary derives
  * them from the text it is sending.
  */
-export function threadContextRecordsFromPrompt(prompt: string): ThreadContextRecord[] {
+export function threadContextRecordsFromPrompt(
+  prompt: string,
+  environmentId: EnvironmentId,
+): ThreadContextRecord[] {
   const records = new Map<string, ThreadContextRecord>();
   for (const occurrence of collectComposerContextReferences(prompt)) {
     if (occurrence.kind !== "thread" || records.has(occurrence.contextId)) continue;
@@ -232,7 +234,8 @@ export function threadContextRecordsFromPrompt(prompt: string): ThreadContextRec
       contextId: occurrence.contextId,
       kind: "thread",
       label: title,
-      threadId: occurrence.contextId,
+      threadId: occurrence.contextId as unknown as ThreadId,
+      environmentId,
       title,
     });
   }
@@ -369,6 +372,7 @@ export function buildMessageContext(input: {
   attachments?: ReadonlyArray<BoundComposerAttachment>;
   /** The prompt being sent; thread references are read straight out of it. */
   prompt?: string | undefined;
+  environmentId?: EnvironmentId | undefined;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
     (input.attachments ?? []).flatMap(({ attachment }) =>
@@ -389,7 +393,9 @@ export function buildMessageContext(input: {
   ];
   // Thread references have no draft record to collect from; the link is the record.
   const claimed = new Set(records.map((record) => record.contextId));
-  for (const record of threadContextRecordsFromPrompt(input.prompt ?? "")) {
+  for (const record of input.environmentId
+    ? threadContextRecordsFromPrompt(input.prompt ?? "", input.environmentId)
+    : []) {
     if (claimed.has(record.contextId)) continue;
     claimed.add(record.contextId);
     records.push(record);

@@ -7683,3 +7683,37 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
   });
 });
+
+it.effect("grants configured project folders in Codex workspace sandbox and runtime context", () =>
+  Effect.gen(function* () {
+    const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+      nativeThreadId: "folders",
+      codexInput: [{ type: "text", text: "test" }],
+      runtimePolicy: {
+        runtimeMode: "auto-accept-edits",
+        interactionMode: "default",
+        cwd: "/workspace",
+        additionalDirectories: ["/shared-library"],
+      },
+      modelSelection: CODEX_TEST_MODEL_SELECTION,
+      hasT3Mcp: true,
+    });
+    assert.deepEqual(params.sandboxPolicy, {
+      type: "workspaceWrite",
+      writableRoots: ["/shared-library"],
+    });
+    assert.include(params.additionalContext?.t3_code_runtime?.value ?? "", "/shared-library");
+    assert.deepEqual(
+      CodexAdapterV2.codexThreadRuntimeParams({
+        threadId: null,
+        runtimePolicy: {
+          runtimeMode: "auto-accept-edits",
+          interactionMode: "default",
+          cwd: "/workspace",
+          additionalDirectories: ["/shared-library"],
+        },
+      }).config["sandbox_workspace_write.writable_roots"],
+      ["/shared-library"],
+    );
+  }),
+);

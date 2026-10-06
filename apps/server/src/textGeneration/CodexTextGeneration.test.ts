@@ -35,6 +35,7 @@ interface FakeCodexInput {
   lifecycle?: { port: number; command: "exec" | "mcp list" };
   exitCode?: number;
   stderr?: string;
+  requireSuggestionIsolation?: boolean;
   requireImage?: boolean;
   requireServiceTier?: string;
   requireReasoningEffort?: string;
@@ -48,6 +49,7 @@ interface FakeCodexInput {
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
   const check = JSON.stringify({
+    requireSuggestionIsolation: input.requireSuggestionIsolation ?? false,
     requireImage: input.requireImage ?? false,
     requireServiceTier: input.requireServiceTier ?? null,
     requireReasoningEffort: input.requireReasoningEffort ?? null,
@@ -139,6 +141,19 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "if (check.stdinMustNotContain !== null && stdinContent.includes(check.stdinMustNotContain)) {",
         '  fail("stdin contained forbidden content", 4);',
         "}",
+        "if (check.requireSuggestionIsolation) {",
+        '  for (const arg of ["--ignore-rules", "--ephemeral"]) {',
+        '    if (!args.includes(arg)) fail("missing isolation flag " + arg, 20);',
+        "  }",
+        '  if (args.includes("--ignore-user-config")) fail("provider endpoint config was discarded", 24);',
+        '  for (const config of ["project_doc_max_bytes=0", "features.shell_tool=false", "features.unified_exec=false", "features.hooks=false", "features.plugins=false", "mcp_servers={}"]) {',
+        '    if (!args.includes(config)) fail("missing isolation config " + config, 21);',
+        "  }",
+        '  if (!process.cwd().includes("t3code-codex-suggestion-")) fail("project cwd leaked", 22);',
+        '  const instructionsArg = args.find((arg) => arg.startsWith("model_instructions_file="));',
+        '  const instructions = NodeFS.readFileSync(JSON.parse(instructionsArg.slice("model_instructions_file=".length)), "utf8");',
+        '  if (!instructions.startsWith("Suggest a user")) fail("agent instructions leaked", 23);',
+        "}",
         'if (check.stderr !== null) process.stderr.write(check.stderr + "\\n");',
         'if (outputPath !== null) NodeFS.writeFileSync(outputPath, check.output + "\\n");',
         "process.exitCode = check.exitCode;",
@@ -214,6 +229,44 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       }),
   );
 
+  it.effect("generates suggestions in an ephemeral workspace with capabilities disabled", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ suggestion: "Add coverage for the remote callback." }),
+        requireSuggestionIsolation: true,
+        stdinMustContain: "Final assistant reply:",
+        launchArgs:
+          '--config features.shell_tool=true --config model_provider="test-gateway" --config model_providers.test-gateway.base_url="https://example.com/provider"',
+        requireArg: "--config model_providers.test-gateway.base_url=https://example.com/provider",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          expect(
+            yield* textGeneration.generatePromptSuggestion({
+              cwd: process.cwd(),
+              userMessage: "Fix remote login",
+              assistantMessage: "The callback is fixed; coverage is still missing.",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            }),
+          ).toEqual({ suggestion: "Add coverage for the remote callback." });
+        }),
+    ),
+  );
+
+  it.effect("accepts a null suggestion without a fallback or retry", () =>
+    withFakeCodexEnv(
+      { output: JSON.stringify({ suggestion: null }), requireSuggestionIsolation: true },
+      (textGeneration) =>
+        textGeneration
+          .generatePromptSuggestion({
+            cwd: process.cwd(),
+            userMessage: "Fix login",
+            assistantMessage: "Done.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          })
+          .pipe(Effect.map((result) => expect(result).toEqual({ suggestion: null }))),
+    ),
+  );
   it.effect.each(["gpt-5.6-luna", "openai.gpt-5.6-luna"])(
     "dispatches the qualified live model for %s",
     (selectedModel) =>

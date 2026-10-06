@@ -148,10 +148,15 @@ export const ReceivedProjectIcon = ForwardCompatibleUnion(projectIconMembers, "k
   ),
 );
 
+// Additional workspace roots are editable but are never checkpointed.
+export const ProjectAdditionalDirectories = Schema.Array(TrimmedNonEmptyString);
+export type ProjectAdditionalDirectories = typeof ProjectAdditionalDirectories.Type;
+
 export const Project = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalDirectories: Schema.optional(ProjectAdditionalDirectories),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   projectIcon: Schema.optional(Schema.NullOr(ReceivedProjectIcon)),
@@ -175,6 +180,7 @@ export type ProjectSnapshot = typeof ProjectSnapshot.Type;
 export const ProjectCreatePayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  additionalDirectories: Schema.optional(ProjectAdditionalDirectories),
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
@@ -184,6 +190,7 @@ export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
 export const ProjectUpdatePayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  additionalDirectories: Schema.optional(ProjectAdditionalDirectories),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   autoPull: Schema.optional(Schema.Boolean),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
@@ -522,7 +529,8 @@ export type ProjectCreateNewInput = typeof ProjectCreateNewInput.Type;
 export const ProjectCreateNewResult = Schema.Struct({
   projectId: ProjectId,
   workspaceRoot: TrimmedNonEmptyString,
-  /** The project and its files exist either way. */
+  additionalDirectories: Schema.optional(ProjectAdditionalDirectories),
+  /** Why the first commit failed. The project and its files exist either way. */
   commitError: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectCreateNewResult = typeof ProjectCreateNewResult.Type;

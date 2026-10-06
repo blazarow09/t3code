@@ -5,6 +5,7 @@ import {
   type OrchestrationProjectShell,
   StoredProjectIcon,
   ProjectId,
+  ProjectAdditionalDirectories,
   ProjectScript,
   ThreadEnvMode,
 } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ export const ProjectRow = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
   workspaceRoot: Schema.String,
+  additionalDirectories: Schema.optional(ProjectAdditionalDirectories),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
   autoPull: Schema.Boolean,
@@ -50,6 +52,7 @@ const ProjectDbRow = Schema.Struct({
   defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   autoPull: Schema.BooleanFromBit,
   projectIcon: Schema.NullOr(Schema.fromJsonString(StoredProjectIcon)),
+  additionalDirectories: Schema.NullOr(Schema.fromJsonString(ProjectAdditionalDirectories)),
   scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
 });
 
@@ -58,6 +61,7 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
     id: row.projectId,
     title: row.title,
     workspaceRoot: row.workspaceRoot,
+    additionalDirectories: row.additionalDirectories ?? [],
     repositoryIdentity: null,
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
@@ -114,6 +118,7 @@ export const make = Effect.gen(function* () {
         project_id AS "projectId",
         title,
         workspace_root AS "workspaceRoot",
+        additional_directories_json AS "additionalDirectories",
         default_model_selection_json AS "defaultModelSelection",
         default_thread_env_mode AS "defaultThreadEnvMode",
         auto_pull AS "autoPull",
@@ -137,13 +142,14 @@ export const make = Effect.gen(function* () {
   });
 
   const upsertRow = (row: ProjectRow) =>
-    encodeRow(row).pipe(
+    encodeRow({ ...row, additionalDirectories: row.additionalDirectories ?? [] }).pipe(
       Effect.flatMap(
         (encoded) => sql`
           INSERT INTO projection_projects (
             project_id,
             title,
             workspace_root,
+            additional_directories_json,
             default_model_selection_json,
             default_thread_env_mode,
             auto_pull,
@@ -158,6 +164,7 @@ export const make = Effect.gen(function* () {
             ${encoded.projectId},
             ${encoded.title},
             ${encoded.workspaceRoot},
+            ${encoded.additionalDirectories},
             ${encoded.defaultModelSelection},
             ${encoded.defaultThreadEnvMode},
             ${encoded.autoPull},
@@ -172,6 +179,7 @@ export const make = Effect.gen(function* () {
           DO UPDATE SET
             title = excluded.title,
             workspace_root = excluded.workspace_root,
+            additional_directories_json = excluded.additional_directories_json,
             default_model_selection_json = excluded.default_model_selection_json,
             default_thread_env_mode = excluded.default_thread_env_mode,
             auto_pull = excluded.auto_pull,
@@ -193,7 +201,13 @@ export const make = Effect.gen(function* () {
   const get: ProjectStoreV2["Service"]["get"] = (projectId, options) =>
     selectRows({ projectId, includeDeleted: options?.includeDeleted === true }).pipe(
       NodeSqliteClient.readOnly,
-      Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
+      Effect.map((rows) =>
+        Option.fromUndefinedOr(
+          rows[0] === undefined
+            ? undefined
+            : { ...rows[0], additionalDirectories: rows[0].additionalDirectories ?? [] },
+        ),
+      ),
       mapError("get"),
     );
 
@@ -201,14 +215,26 @@ export const make = Effect.gen(function* () {
     selectRows({
       ...(options?.projectIds === undefined ? {} : { projectIds: options.projectIds }),
       includeDeleted: options?.includeDeleted === true,
-    }).pipe(NodeSqliteClient.readOnly, mapError("list"));
+    }).pipe(
+      NodeSqliteClient.readOnly,
+      Effect.map((rows) =>
+        rows.map((row) => ({ ...row, additionalDirectories: row.additionalDirectories ?? [] })),
+      ),
+      mapError("list"),
+    );
 
   const findActiveByWorkspaceRoot: ProjectStoreV2["Service"]["findActiveByWorkspaceRoot"] = (
     workspaceRoot,
   ) =>
     selectRows({ workspaceRoot, includeDeleted: false }).pipe(
       NodeSqliteClient.readOnly,
-      Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
+      Effect.map((rows) =>
+        Option.fromUndefinedOr(
+          rows[0] === undefined
+            ? undefined
+            : { ...rows[0], additionalDirectories: rows[0].additionalDirectories ?? [] },
+        ),
+      ),
       mapError("findActiveByWorkspaceRoot"),
     );
 
@@ -220,6 +246,7 @@ export const make = Effect.gen(function* () {
           projectId: payload.projectId,
           title: payload.title,
           workspaceRoot: payload.workspaceRoot,
+          additionalDirectories: payload.additionalDirectories ?? [],
           defaultModelSelection: payload.defaultModelSelection,
           defaultThreadEnvMode: payload.defaultThreadEnvMode ?? null,
           autoPull: false,
@@ -244,6 +271,9 @@ export const make = Effect.gen(function* () {
       const payload = event.payload;
       yield* upsertRow({
         ...row,
+        ...(payload.additionalDirectories === undefined
+          ? {}
+          : { additionalDirectories: payload.additionalDirectories }),
         ...(payload.title === undefined ? {} : { title: payload.title }),
         ...(payload.workspaceRoot === undefined ? {} : { workspaceRoot: payload.workspaceRoot }),
         ...(payload.defaultModelSelection === undefined

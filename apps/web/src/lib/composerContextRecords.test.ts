@@ -483,7 +483,10 @@ describe("thread references", () => {
         title: "Fix the flaky checkout test",
       }),
     );
-    const records = threadContextRecordsFromPrompt(`look at ${link} and ${link} again`);
+    const records = threadContextRecordsFromPrompt(
+      `look at ${link} and ${link} again`,
+      EnvironmentId.make("env-1"),
+    );
 
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
@@ -499,6 +502,7 @@ describe("thread references", () => {
       terminalContexts: [],
       reviewComments: [],
       previewAnnotations: [],
+      environmentId: EnvironmentId.make("env-1"),
       prompt: formatInlineContextReference(
         threadContextReference({ threadId: ThreadId.make("thr_2"), title: "Other chat" }),
       ),

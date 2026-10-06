@@ -233,6 +233,8 @@ function makeClaudeTestTurnInput(input: {
   };
 }
 
+const encodeAuthDiagnosticPath = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it.each([
     ["--permission-mode acceptEdits", "acceptEdits"],
@@ -14870,5 +14872,24 @@ describe("ClaudeAdapterV2 query message stream", () => {
       yield* Scope.close(scope, Exit.void);
       assert.isTrue(closed);
     }),
+  );
+});
+
+it("grants configured project folders and tells Claude where they are", () => {
+  const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    nativeThreadId: "folders",
+    resume: false,
+    cwd: "/workspace",
+    additionalDirectories: ["/shared-library"],
+  });
+  assert.deepEqual(options.additionalDirectories, ["/shared-library", "/workspace"]);
+  assert.include(
+    typeof options.systemPrompt === "object" &&
+      options.systemPrompt !== null &&
+      "append" in options.systemPrompt
+      ? (options.systemPrompt.append ?? "")
+      : "",
+    "/shared-library",
   );
 });

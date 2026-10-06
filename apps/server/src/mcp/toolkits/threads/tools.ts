@@ -1,16 +1,18 @@
 import { McpCapabilityUnavailableError, TrimmedNonEmptyString } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import * as Tool from "effect/unstable/ai/Tool";
-import * as Toolkit from "effect/unstable/ai/Toolkit";
+import * as Tool from "effect/ai/Tool";
+import * as Toolkit from "effect/ai/Toolkit";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  OrchestrationEngine.OrchestrationEngineService,
-  ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+  ThreadManagement.ThreadManagementService,
+  ThreadSearch.ThreadSearch,
+  ProjectStore.ProjectStoreV2,
 ];
 
 /** Transcript text is clamped per message so one long dump cannot swallow the context window. */

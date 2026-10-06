@@ -43,6 +43,11 @@ if (!process.stdin.isTTY) {
   stdinContent = Buffer.concat(chunks).toString("utf8");
 }
 
+if (
+  stdinContent.includes("Suggest one useful next message") &&
+  (!argv.includes("--system-prompt") || !argv.includes("--no-session-persistence"))
+)
+  fail("suggestion capabilities leaked", 13);
 const argsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
 if (argsMustContain && !args.includes(argsMustContain)) {
   fail("args missing expected content", 2);

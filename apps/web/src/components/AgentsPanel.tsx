@@ -1,3 +1,7 @@
+import { enrichSubagentFromProjection, summarizeKnownAgentUsage } from "./AgentsPanel.logic";
+import { useEnvironmentThread } from "~/state/threads";
+import * as Option from "effect/Option";
+import { useMemo } from "react";
 /**
  * Agents right-panel surface: the fleet view over the native subagent fold.
  * The chat carries one expandable row per spawn batch and links here.
@@ -16,17 +20,19 @@ import type {
   AgentPanelModel,
   AgentPanelWorkflowGroup,
   RuntimeSubagent,
+  SubagentUsage,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   formatSubagentModelLabel,
   formatSubagentTokenCount,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import type { SubagentTranscriptEntry } from "@t3tools/client-runtime/state/subagentRuntime";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import {
   createContext,
+  useCallback,
   use,
   useEffect,
   useLayoutEffect,
@@ -42,6 +48,8 @@ import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
+
+const AgentUsageReporterContext = createContext<(agent: RuntimeSubagent) => void>(() => {});
 
 const AgentTranscriptMediaContext = createContext<{
   readonly environmentId: EnvironmentId | null;
@@ -327,6 +335,45 @@ function TranscriptTimeline({ entries }: { entries: ReadonlyArray<SubagentTransc
  * read-only run handles. Renders below the fixed row so the roster's height
  * contract is untouched; only open rows mount it.
  */
+function ChildAgentDetail({
+  agent,
+  toolActivity,
+  onLoaded,
+}: {
+  agent: RuntimeSubagent;
+  onLoaded?: ((agent: RuntimeSubagent) => void) | undefined;
+  toolActivity?: ReadonlyArray<AgentToolActivityEntry> | undefined;
+}) {
+  const media = use(AgentTranscriptMediaContext);
+  const reportUsage = use(AgentUsageReporterContext);
+  const childThreadId = agent.childThreadId ? ThreadId.make(agent.childThreadId) : null;
+  // Mount only for an expanded row. The normal bounded child stream keeps live
+  // output current and releases the subscription when the row closes.
+  const state = useEnvironmentThread(childThreadId ? media.environmentId : null, childThreadId);
+  const projection = Option.getOrNull(state.data);
+  const enriched = useMemo(() => {
+    if (!projection) return agent;
+    return enrichSubagentFromProjection(agent, projection);
+  }, [agent, projection]);
+  useEffect(() => {
+    if (projection) {
+      onLoaded?.(enriched);
+      reportUsage(enriched);
+    }
+  }, [enriched, onLoaded, projection, reportUsage]);
+  return (
+    <AgentTranscriptMediaContext.Provider
+      value={{
+        ...media,
+        threadId: childThreadId ?? media.threadId,
+        workspaceRoot: projection?.thread.worktreePath ?? media.workspaceRoot,
+      }}
+    >
+      <AgentDetail agent={enriched} toolActivity={toolActivity} />
+    </AgentTranscriptMediaContext.Provider>
+  );
+}
+
 function AgentDetail({
   agent,
   toolActivity,
@@ -453,6 +500,8 @@ function AgentRow({
   toolActivity?: ReadonlyArray<AgentToolActivityEntry> | undefined;
 }) {
   const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState<RuntimeSubagent | null>(null);
+  const usage = loaded?.usage ?? agent.usage;
   const expandable = agent.kind !== "workflow";
   const statusLabel = agentStatusLabel(agent);
   const activity = agentActivityText(agent);
@@ -463,8 +512,8 @@ function AgentRow({
       : agent.role;
   const metadata = [
     modelLabel,
-    agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
-    agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
+    usage ? `${formatSubagentTokenCount(usage.totalTokens)} tok` : "— tok",
+    usage?.toolUses !== undefined ? `${usage.toolUses} tools` : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
 
@@ -529,7 +578,9 @@ function AgentRow({
       >
         {content}
       </button>
-      {open ? <AgentDetail agent={agent} toolActivity={toolActivity} /> : null}
+      {open ? (
+        <ChildAgentDetail agent={agent} toolActivity={toolActivity} onLoaded={setLoaded} />
+      ) : null}
     </div>
   );
 }
@@ -901,6 +952,35 @@ export function AgentsPanel({
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   visible?: boolean;
 }) {
+  const [loadedUsage, setLoadedUsage] = useState<Readonly<Record<string, SubagentUsage>>>({});
+  const reportUsage = useCallback((agent: RuntimeSubagent) => {
+    const usage = agent.usage;
+    if (!usage) return;
+    setLoadedUsage((previous) => {
+      const existing = previous[agent.id];
+      if (
+        existing &&
+        existing.totalTokens === usage.totalTokens &&
+        existing.inputTokens === usage.inputTokens &&
+        existing.outputTokens === usage.outputTokens &&
+        existing.toolUses === usage.toolUses &&
+        existing.cachedInputTokens === usage.cachedInputTokens &&
+        existing.reasoningOutputTokens === usage.reasoningOutputTokens
+      )
+        return previous;
+      return { ...previous, [agent.id]: usage };
+    });
+  }, []);
+  const usageSummary = summarizeKnownAgentUsage(
+    [
+      ...model.directAgents,
+      ...model.workflows.flatMap((group) => {
+        const members = workflowMembers(group);
+        return members.length > 0 ? members : [group.workflow];
+      }),
+    ],
+    loadedUsage,
+  );
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const scrollContentRef = useRef<HTMLDivElement>(null);
 
@@ -984,50 +1064,58 @@ export function AgentsPanel({
   }
 
   return (
-    <AgentTranscriptMediaContext.Provider
-      value={{ environmentId, threadId, workspaceRoot, onImageExpand }}
-    >
-      <div className="flex h-full min-h-0 flex-col">
-        <ScrollArea ref={scrollRootRef} className="min-h-0 flex-1">
-          <div ref={scrollContentRef} className="flex flex-col gap-2 p-2">
-            {model.workflows.map((group) => (
-              <WorkflowSection
-                key={group.workflow.id}
-                group={group}
-                environmentId={environmentId}
-                threadId={threadId}
-                agentToolActivity={agentToolActivity}
-              />
-            ))}
-            {model.directAgents.length > 0 ? (
-              <section>
-                 <div className="px-1.5 pt-1 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Direct spawns
-                </div>
-                {model.directAgents.map((agent) => (
-                  <AgentRow
-                    key={agent.id}
-                    agent={agent}
-                    toolActivity={agentToolActivity?.[agent.id]}
-                  />
-                ))}
-              </section>
-            ) : null}
-          </div>
-        </ScrollArea>
-         <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-2xs text-muted-foreground">
-          <span className="flex items-center gap-2">
-            {model.runningCount + model.waitingCount > 0 ? (
-              <span className="text-info-foreground">
-                ● {model.runningCount + model.waitingCount} working
-              </span>
-            ) : null}
-            {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
-            {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
-          </span>
-          <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
-        </footer>
-      </div>
-    </AgentTranscriptMediaContext.Provider>
+    <AgentUsageReporterContext.Provider value={reportUsage}>
+      <AgentTranscriptMediaContext.Provider
+        value={{ environmentId, threadId, workspaceRoot, onImageExpand }}
+      >
+        <div className="flex h-full min-h-0 flex-col">
+          <ScrollArea ref={scrollRootRef} className="min-h-0 flex-1">
+            <div ref={scrollContentRef} className="flex flex-col gap-2 p-2">
+              {model.workflows.map((group) => (
+                <WorkflowSection
+                  key={group.workflow.id}
+                  group={group}
+                  environmentId={environmentId}
+                  threadId={threadId}
+                  agentToolActivity={agentToolActivity}
+                />
+              ))}
+              {model.directAgents.length > 0 ? (
+                <section>
+                  <div className="px-1.5 pt-1 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Direct spawns
+                  </div>
+                  {model.directAgents.map((agent) => (
+                    <AgentRow
+                      key={agent.id}
+                      agent={agent}
+                      toolActivity={agentToolActivity?.[agent.id]}
+                    />
+                  ))}
+                </section>
+              ) : null}
+            </div>
+          </ScrollArea>
+          <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-2xs text-muted-foreground">
+            <span className="flex items-center gap-2">
+              {model.runningCount + model.waitingCount > 0 ? (
+                <span className="text-info-foreground">
+                  ● {model.runningCount + model.waitingCount} working
+                </span>
+              ) : null}
+              {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
+              {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
+            </span>
+            <span className="tabular-nums">
+              Σ{" "}
+              {usageSummary.knownCount > 0
+                ? formatSubagentTokenCount(usageSummary.totalTokens)
+                : "?"}{" "}
+              tok
+            </span>
+          </footer>
+        </div>
+      </AgentTranscriptMediaContext.Provider>
+    </AgentUsageReporterContext.Provider>
   );
 }

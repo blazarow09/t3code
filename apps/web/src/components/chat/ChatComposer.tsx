@@ -1,5 +1,7 @@
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
+import { promptSuggestionContext } from "@t3tools/client-runtime/prompt-suggestions";
+import { usePromptSuggestion } from "../../hooks/usePromptSuggestion";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -392,6 +394,7 @@ export interface ChatComposerProps {
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
   isCompacting: boolean;
+  promptSuggestionsBlocked: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
   resumeCompactionTokens: number | null;
   keepFullHistory: boolean;
@@ -436,6 +439,7 @@ export interface ChatComposerProps {
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
+  composerInstanceOverride?: ProviderInstanceId | null;
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
 
@@ -568,6 +572,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
+    composerInstanceOverride,
     reportedModelSelection,
     activeProjectId,
     activeContextWindow,
@@ -730,6 +735,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerReviewComments = composerDraft.reviewComments;
   const composerThreadContexts = attachmentDraft.threadContexts;
   const composerEnvironmentContexts = composerDraft.environmentContexts;
+  const { suggestion: promptSuggestion, dismiss: dismissPromptSuggestion } = usePromptSuggestion(
+    promptSuggestionContext({
+      environmentId,
+      thread: props.activeThreadShell,
+      settings,
+      available:
+        routeKind === "server" && phase !== "disconnected" && !props.environmentUnavailable,
+      draftEmpty:
+        prompt.length === 0 &&
+        composerImages.length === 0 &&
+        composerFiles.length === 0 &&
+        composerTerminalContexts.length === 0 &&
+        composerPreviewAnnotations.length === 0 &&
+        composerReviewComments.length === 0 &&
+        composerThreadContexts.length === 0,
+      blocked:
+        props.promptSuggestionsBlocked ||
+        pendingApprovals.length > 0 ||
+        pendingUserInputs.length > 0 ||
+        isSendBusy ||
+        isConnecting ||
+        isRevertingCheckpoint ||
+        props.sendDisabledReason !== null,
+    }),
+  );
   const {
     pendingSnapShotAnimations,
     pendingSnapShotIds,
@@ -921,7 +951,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   const noProviderAvailable =
     selectedProviderEntry === undefined && multipleModelSelections === null;
-  const providerCatalogPending = noProviderAvailable && !providerCatalogKnown;
+  // Before the catalog arrives, every thread resolves to "no provider". Send
+  // stays blocked either way; only the chrome waits, keeping the picker with
+  // the thread's own selection instead of swapping in the setup button and
+  // back once the catalog lands.
+  const threadInstanceId =
+    activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId ?? null;
+  const threadInstanceInCatalog =
+    threadInstanceId != null &&
+    providerInstanceEntries.some((entry) => entry.instanceId === threadInstanceId);
+  // Providers come back one account at a time after a restart. Until the
+  // thread's own instance is in the catalog, keep waiting instead of painting
+  // whichever sibling is ready first.
+  const providerCatalogPending =
+    noProviderAvailable &&
+    (!providerCatalogKnown || (lockedProvider !== null && !threadInstanceInCatalog));
   const showProviderUnavailable = noProviderAvailable && !providerCatalogPending;
   const providerSetupInstanceId = noProviderAvailable
     ? (unavailableProviderInstanceId ??
@@ -1682,6 +1726,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cursorAdjacentToMention: boolean,
     contextIds: string[],
   ) => {
+    dismissPromptSuggestion();
     expandComposerForEditorChange();
     refreshWorkspaceSnapshotOnTyping();
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
@@ -3735,6 +3780,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                   />
                 </ComposerContextActionsContext>
+                {promptSuggestion &&
+                !composerMenuOpen &&
+                !isComposerModelPickerOpen &&
+                !isStashMenuOpen ? (
+                  <button
+                    type="button"
+                    className={cn(
+                      "absolute inset-y-0 right-0 left-0 flex items-start gap-2 overflow-hidden text-left leading-relaxed text-placeholder/60 hover:text-placeholder",
+                      isComposerResting && "items-center whitespace-nowrap leading-8",
+                      isComposerResting &&
+                        (showUsageMeter
+                          ? "right-28"
+                          : showComposerAttachAction
+                            ? "right-20"
+                            : "right-12"),
+                    )}
+                    aria-label={`Use suggestion: ${promptSuggestion}`}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      if (promptRef.current.length > 0) return;
+                      dismissPromptSuggestion();
+                      applyPromptReplacement(0, 0, promptSuggestion, { expectedText: "" });
+                    }}
+                  >
+                    <span className="line-clamp-2 min-w-0">{promptSuggestion}</span>
+                    <span className="shrink-0 text-xs opacity-60">Tab</span>
+                  </button>
+                ) : null}
                 {isComposerResting ? collapsedComposerImagePreviews : null}
                 {showMobilePendingAnswerActions ? (
                   <div

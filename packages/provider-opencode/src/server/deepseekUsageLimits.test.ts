@@ -1,8 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOs from "node:os";
+import * as NodeOS from "node:os";
 
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
+import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -45,6 +47,8 @@ const draft = {
   installed: true,
   checkedAt,
 } as ServerProviderDraft;
+
+const encodeAuthJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 describe("deepseekApiKeyFromEnv", () => {
   it("reads DEEPSEEK_API_KEY and ignores blanks", () => {
@@ -142,12 +146,14 @@ describe("resolveDeepSeekApiKey", () => {
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fileSystem = yield* FileSystem.FileSystem;
-      const dir = path.join(NodeOs.tmpdir(), `t3-deepseek-auth-${Date.now()}`);
+      const dir = path.join(NodeOS.tmpdir(), `t3-deepseek-auth-${yield* Clock.currentTimeMillis}`);
       const authDir = path.join(dir, "opencode");
       yield* fileSystem.makeDirectory(authDir, { recursive: true });
       yield* fileSystem.writeFileString(
         path.join(authDir, "auth.json"),
-        JSON.stringify({ deepseek: { type: "api", key: "sk-from-file" } }),
+        yield* encodeAuthJson({
+          deepseek: { type: "api", key: "sk-from-file" },
+        }),
       );
       expect(
         yield* resolveDeepSeekApiKey({
@@ -158,7 +164,7 @@ describe("resolveDeepSeekApiKey", () => {
       expect(yield* resolveDeepSeekApiKey({ XDG_DATA_HOME: dir })).toBe("sk-from-file");
       expect(
         yield* resolveDeepSeekApiKey({
-          OPENCODE_AUTH_CONTENT: JSON.stringify({
+          OPENCODE_AUTH_CONTENT: yield* encodeAuthJson({
             deepseek: { type: "api", key: "sk-from-content" },
           }),
         }),
@@ -224,6 +230,16 @@ describe("attachOpenCodeDeepSeekUsageLimits", () => {
         checkedAt,
       });
       expect(next).toBe(draft);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response("no key", { status: 401 })),
+          ),
+        ),
+      ),
+    ),
   );
 });

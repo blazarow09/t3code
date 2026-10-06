@@ -742,6 +742,18 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
+    const projectSandboxPolicy =
+      sandboxPolicy?.type === "workspaceWrite" && input.runtimePolicy.additionalDirectories?.length
+        ? {
+            ...sandboxPolicy,
+            writableRoots: [
+              ...new Set([
+                ...(sandboxPolicy.writableRoots ?? []),
+                ...input.runtimePolicy.additionalDirectories,
+              ]),
+            ],
+          }
+        : sandboxPolicy;
     const selectedEffort =
       getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
       codexDefaultReasoningEffortOverride(input.modelSelection.model);
@@ -761,7 +773,11 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     const t3Context =
       input.hasT3Mcp === true
         ? buildCodexAdditionalContext(
-            { model: input.modelSelection.model, reasoningEffort: effort ?? undefined },
+            {
+              model: input.modelSelection.model,
+              reasoningEffort: effort ?? undefined,
+              additionalDirectories: input.runtimePolicy.additionalDirectories,
+            },
             {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
@@ -783,7 +799,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       // Omitting the reviewer on resume preserves the previous Auto reviewer.
       approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
       ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
-      ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
+      ...(projectSandboxPolicy === undefined ? {} : { sandboxPolicy: projectSandboxPolicy }),
       ...(effort === undefined ? {} : { effort }),
       ...(serviceTier === undefined ? {} : { serviceTier }),
       // Codex supplies its own mode instructions; send both modes to clear Plan on exit.
@@ -1317,7 +1333,13 @@ export const CODEX_THREAD_CONFIG = {
 // T3 waits can block for an hour; keep Codex's MCP timeout above that.
 const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 
-function codexThreadRuntimeParams(input: {
+export function isThreadHistoryUnsupportedResumeError(error: {
+  readonly errorMessage: string;
+}): boolean {
+  return /list_turns is not supported yet|not materialized yet/i.test(error.errorMessage);
+}
+
+export function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -1332,6 +1354,13 @@ function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...(input.runtimePolicy?.additionalDirectories?.length
+        ? {
+            "sandbox_workspace_write.writable_roots": [
+              ...input.runtimePolicy.additionalDirectories,
+            ],
+          }
+        : {}),
       ...(mcpSession === undefined
         ? {}
         : {
@@ -2949,15 +2978,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       : null,
                   ),
                   Effect.orElseSucceed(() => null),
-                  Effect.filterOrElse(
-                    (response) => !(response === null),
-                    (_response) =>
-                      client.raw
-                        .request("thread/resume", {
-                          threadId: input.nativeThreadId,
-                          excludeTurns: true,
-                        })
-                        .pipe(Effect.flatMap(decodeCodexChildModel)),
+                  Effect.flatMap((response) =>
+                    response === null
+                      ? client.raw
+                          .request("thread/resume", {
+                            threadId: input.nativeThreadId,
+                            excludeTurns: true,
+                          })
+                          .pipe(
+                            Effect.catchTags({
+                              CodexAppServerRequestError: (cause) =>
+                                isThreadHistoryUnsupportedResumeError(cause)
+                                  ? client.raw.request("thread/resume", {
+                                      threadId: input.nativeThreadId,
+                                      excludeTurns: false,
+                                    })
+                                  : Effect.fail(cause),
+                            }),
+                            Effect.flatMap(decodeCodexChildModel),
+                          )
+                      : Effect.succeed(response),
                   ),
                   Effect.timeout("5 seconds"),
                   Effect.flatMap((response) =>
@@ -6817,7 +6857,48 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.andThen(
                   resume.pipe(
                     Effect.catchTags({
-                      CodexAppServerRequestError: (cause) => {
+                      CodexAppServerRequestError: (
+                        cause,
+                      ): Effect.Effect<unknown, CodexErrors.CodexAppServerError> => {
+                        if (isThreadHistoryUnsupportedResumeError(cause)) {
+                          return client.raw
+                            .request("thread/resume", {
+                              threadId: nativeThreadId,
+                              excludeTurns: false,
+                              ...codexThreadRuntimeParams({
+                                threadId:
+                                  threadInput.threadId ?? threadInput.providerThread.appThreadId,
+                                ...(threadInput.modelSelection
+                                  ? { modelSelection: threadInput.modelSelection }
+                                  : {}),
+                                ...(threadInput.runtimePolicy
+                                  ? { runtimePolicy: threadInput.runtimePolicy }
+                                  : {}),
+                              }),
+                            })
+                            .pipe(
+                              Effect.catchTags({
+                                CodexAppServerRequestError: (): Effect.Effect<
+                                  unknown,
+                                  CodexErrors.CodexAppServerError
+                                > =>
+                                  client.raw.request(
+                                    "thread/start",
+                                    codexThreadRuntimeParams({
+                                      threadId:
+                                        threadInput.threadId ??
+                                        threadInput.providerThread.appThreadId,
+                                      ...(threadInput.modelSelection
+                                        ? { modelSelection: threadInput.modelSelection }
+                                        : {}),
+                                      ...(threadInput.runtimePolicy
+                                        ? { runtimePolicy: threadInput.runtimePolicy }
+                                        : {}),
+                                    }),
+                                  ),
+                              }),
+                            );
+                        }
                         if (
                           !/\bsession \S+ is archived\b|\bcodex unarchive\b/i.test(
                             cause.errorMessage,

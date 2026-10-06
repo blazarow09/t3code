@@ -3481,6 +3481,7 @@ export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalComma
 export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 
 export const ORCHESTRATION_V2_WS_METHODS = {
+  getPromptSuggestion: "orchestration.getPromptSuggestion",
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
@@ -4024,6 +4025,10 @@ export class OrchestrationV2SearchThreadError extends Schema.TaggedError<Orchest
 }
 
 export const OrchestrationV2RpcSchemas = {
+  getPromptSuggestion: {
+    input: Schema.Struct({ threadId: ThreadId, runId: RunId }),
+    output: Schema.Struct({ suggestion: Schema.NullOr(Schema.String) }),
+  },
   searchThread: {
     input: OrchestrationV2SearchThreadInput,
     output: OrchestrationV2SearchThreadResult,

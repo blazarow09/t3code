@@ -2626,3 +2626,16 @@ it.effect.each([false, true])(
       Effect.scoped,
     ),
 );
+
+it("grants configured project folders in OpenCode external-directory rules", () => {
+  const rules = openCodePermissionRules({
+    runtimeMode: "approval-required",
+    interactionMode: "default",
+    cwd: "/workspace",
+    additionalDirectories: ["/shared-library/"],
+  });
+  assert.deepEqual(
+    rules.findLast((rule) => rule.permission === "external_directory"),
+    { permission: "external_directory", pattern: "/shared-library/*", action: "allow" },
+  );
+});

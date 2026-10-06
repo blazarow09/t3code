@@ -1,12 +1,11 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
-  TurnId,
-  type OrchestrationThreadShell,
+  RunId,
+  type OrchestrationV2ThreadShell,
   type ServerProvider,
   type ServerSettings as Settings,
   TextGenerationError,
@@ -20,20 +19,22 @@ import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
-import { SqlClient } from "effect/unstable/sql";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Schema from "effect/Schema";
 
 import { makePromptSuggestions } from "./promptSuggestions.ts";
-import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { layerMemory as SqlitePersistenceMemory } from "./persistence/Sqlite.ts";
+import { ThreadManagementService } from "./orchestration-v2/ThreadManagementService.ts";
+import { ProjectStoreV2 } from "./orchestration-v2/ProjectStore.ts";
 import type { ProviderInstance } from "./provider/ProviderDriver.ts";
-import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderInstanceRegistry } from "./provider/ProviderInstanceRegistry.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import type { PromptSuggestionGenerationInput } from "./textGeneration/TextGeneration.ts";
 
 const threadId = ThreadId.make("thread");
-const turnId = TurnId.make("turn");
+const runId = RunId.make("turn");
 const instanceId = ProviderInstanceId.make("codex_work");
-const input = { threadId, turnId };
+const input = { threadId, runId };
 const expected = { suggestion: "Add regression coverage for the parser." };
 
 const makeHarness = Effect.gen(function* () {
@@ -49,35 +50,20 @@ const makeHarness = Effect.gen(function* () {
       },
     },
   };
-  let thread: OrchestrationThreadShell = {
+  let thread = {
     id: threadId,
     projectId: ProjectId.make("project"),
     title: "Parser",
     modelSelection: { instanceId, model: "large" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
     worktreePath: null,
-    pullRequests: [],
-    latestTurn: {
-      turnId,
-      state: "completed",
-      requestedAt: timestamp,
-      startedAt: timestamp,
-      completedAt: timestamp,
-      assistantMessageId: MessageId.make("assistant"),
-    },
-    createdAt: timestamp,
-    updatedAt: timestamp,
+    latestRunId: runId,
+    latestRunCompletedAt: yield* DateTime.now,
+    status: "idle",
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    session: null,
-    latestUserMessageAt: timestamp,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
+    activeRunId: null,
+    pendingRuntimeRequest: null,
     hasActionableProposedPlan: false,
-  };
+  } as OrchestrationV2ThreadShell;
   let provider: ServerProvider = {
     instanceId,
     driver: ProviderDriverKind.make("codex"),
@@ -134,31 +120,20 @@ const makeHarness = Effect.gen(function* () {
         }),
     },
   } as ProviderInstance;
-  yield* sql`INSERT INTO projection_thread_messages
-    (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-    VALUES ('user', ${threadId}, ${turnId}, 'user', ${"u".repeat(5000)}, 0, ${timestamp}, ${timestamp}),
-      ('assistant', ${threadId}, ${turnId}, 'assistant', ${"a".repeat(9000)}, 0, ${timestamp}, ${timestamp})`;
-  yield* sql`INSERT INTO projection_turns
-    (thread_id, turn_id, pending_message_id, assistant_message_id, state, requested_at, started_at, completed_at, checkpoint_files_json)
-    VALUES (${threadId}, ${turnId}, 'user', 'assistant', 'completed', ${timestamp}, ${timestamp}, ${timestamp}, '[]')`;
+  const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+  yield* sql`INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json) VALUES ('user', ${threadId}, ${runId}, 'user', 0, ${timestamp}, ${timestamp}, ${yield* encode({ text: "u".repeat(5000) })}), ('assistant', ${threadId}, ${runId}, 'assistant', 0, ${timestamp}, ${timestamp}, ${yield* encode({ text: "a".repeat(9000) })})`;
+  yield* sql`INSERT INTO orchestration_v2_projection_runs (thread_id,run_id,ordinal,provider,status,requested_at,completed_at,payload_json) VALUES (${threadId},${runId},1,'codex','completed',${timestamp},${timestamp},${yield* encode({ userMessageId: "user" })})`;
   const get = yield* makePromptSuggestions.pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(ServerSettingsService)({ getSettings: Effect.sync(() => settings) }),
-        Layer.mock(ProjectionSnapshotQuery)({
-          getThreadShellById: () => Effect.sync(() => Option.some(thread)),
-          getProjectShellById: () =>
+        Layer.mock(ThreadManagementService)({ getThreadShell: () => Effect.sync(() => thread) }),
+        Layer.mock(ProjectStoreV2)({
+          get: () =>
             Effect.succeed(
               Option.some({
-                id: thread.projectId,
-                title: "Project",
                 workspaceRoot: "/work",
-                scripts: [],
-                createdAt: timestamp,
-                updatedAt: timestamp,
-                repositoryIdentity: null,
-                defaultModelSelection: null,
-              }),
+              } as import("./orchestration-v2/ProjectStore.ts").ProjectRow),
             ),
         }),
         Layer.mock(ProviderInstanceRegistry)({
@@ -182,7 +157,7 @@ const makeHarness = Effect.gen(function* () {
     settings: (patch: Partial<Settings>) => {
       settings = { ...settings, ...patch };
     },
-    thread: (patch: Partial<OrchestrationThreadShell>) => {
+    thread: (patch: Partial<OrchestrationV2ThreadShell>) => {
       thread = { ...thread, ...patch };
     },
     provider: (patch: Partial<ServerProvider>) => {
@@ -269,7 +244,7 @@ it.effect("does not deliver a suggestion after another turn starts", () =>
       h.block();
       const request = yield* h.get(input).pipe(Effect.forkChild);
       yield* Deferred.await(h.requested);
-      h.thread({ latestTurn: null });
+      h.thread({ latestRunId: null });
       yield* Deferred.succeed(h.finish, undefined);
       assert.deepStrictEqual(yield* Fiber.join(request), { suggestion: null });
     }),
@@ -297,14 +272,14 @@ it.effect(
         h.settings({ promptSuggestionsEnabled: false });
         assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
         h.settings({ promptSuggestionsEnabled: true });
-        h.thread({ hasPendingUserInput: true });
+        h.thread({ status: "waiting" });
         assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
-        h.thread({ hasPendingUserInput: false, hasPendingApprovals: true });
+        h.thread({ status: "running" });
         assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
-        h.thread({ hasPendingApprovals: false });
+        h.thread({ status: "idle" });
         h.provider({ models: [] });
         assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
-        assert.deepStrictEqual(yield* h.get({ ...input, turnId: TurnId.make("old") }), {
+        assert.deepStrictEqual(yield* h.get({ ...input, runId: RunId.make("old") }), {
           suggestion: null,
         });
         assert.strictEqual(h.calls.length, 0);
@@ -315,9 +290,7 @@ it.effect(
 it.effect("skips queued user messages rather than suggesting a competing next step", () =>
   testHarness((h) =>
     Effect.gen(function* () {
-      yield* h.sql`INSERT INTO projection_thread_messages
-    (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-    VALUES ('queued', ${threadId}, NULL, 'user', 'Do this next', 0, '9999-01-01T00:00:00Z', '9999-01-01T00:00:00Z')`;
+      yield* h.sql`INSERT INTO orchestration_v2_projection_messages (message_id,thread_id,role,streaming,created_at,updated_at,payload_json) VALUES ('queued',${threadId},'user',0,'9999-01-01T00:00:00Z','9999-01-01T00:00:00Z','{"text":"Do this next"}')`;
       assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
       assert.strictEqual(h.calls.length, 0);
     }),

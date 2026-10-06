@@ -46,6 +46,7 @@ import type {
 } from "./selectionTransition.ts";
 
 export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
+  additionalDirectories: Schema.optional(Schema.Array(Schema.String)),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   cwd: Schema.NullOr(Schema.String),

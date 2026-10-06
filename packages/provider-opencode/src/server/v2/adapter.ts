@@ -320,7 +320,7 @@ type TurnTerminal =
 type Rule = Permission.Rule;
 type RulesPolicy = Pick<
   ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-  "runtimeMode" | "interactionMode"
+  "runtimeMode" | "interactionMode" | "additionalDirectories"
 >;
 type NativeForm = EventOf<"form.created">["data"]["form"];
 
@@ -378,6 +378,11 @@ const sessionRules = (
         rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
         rule("external_directory", "ask"),
       ]),
+  ...(policy.additionalDirectories ?? []).map((directory) => ({
+    action: "external_directory",
+    resource: `${directory.replace(/[\\/]+$/, "")}/*`,
+    effect: "allow" as const,
+  })),
   ...grants,
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
@@ -3050,7 +3055,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (mcpAvailable) state.mcp = wanted;
       }
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        buildRuntimeInstructions({
+          harness: "OpenCode",
+          model: turnInput.modelSelection.model,
+          additionalDirectories: turnInput.runtimePolicy.additionalDirectories,
+        }),
         t3OrchestrationSystemPrompt(mcpAvailable),
       ]
         .filter((part) => part !== undefined && part.length > 0)

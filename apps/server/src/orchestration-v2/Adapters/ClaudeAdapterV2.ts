@@ -1432,6 +1432,7 @@ To wait for a background command or Monitor you started (tests, a build), call \
 `;
 
 export function makeClaudeQueryOptions(input: {
+  readonly additionalDirectories?: ReadonlyArray<string> | undefined;
   readonly modelSelection: ModelSelection;
   readonly nativeThreadId: string;
   readonly resume: boolean;
@@ -1555,7 +1556,7 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append: [
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
+        buildRuntimeInstructions({ harness: "Claude Code", additionalDirectories: input.additionalDirectories }) +
           (input.mcpServers === undefined
             ? ""
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS + CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS),
@@ -1565,6 +1566,7 @@ export function makeClaudeQueryOptions(input: {
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
+    ...(input.additionalDirectories ?? []),
     ...(input.cwd === null ? [] : [input.cwd]),
     ...(input.attachmentsDir === undefined ? [] : [input.attachmentsDir]),
   ];
@@ -9809,6 +9811,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
+            additionalDirectories: turnInput.runtimePolicy.additionalDirectories,
             attachmentsDir,
             settings: adapterOptions.settings,
             ...(launchArgSettings === undefined ? {} : { sdkSettings: launchArgSettings }),

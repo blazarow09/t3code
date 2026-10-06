@@ -581,6 +581,8 @@ export default function ChatView(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
+  const [composerInstanceOverride, setComposerInstanceOverride] =
+    useState<ProviderInstanceId | null>(null);
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -3521,6 +3523,12 @@ export default function ChatView(props: ChatViewProps) {
                               providerCatalogKnown={serverConfig !== null}
                               activeProjectDefaultModelSelection={
                                 activeProjectDefaultModelSelection
+                              }
+                              composerInstanceOverride={composerInstanceOverride}
+                              promptSuggestionsBlocked={
+                                isWorking ||
+                                visibleThreadError !== null ||
+                                paintOnlyDisplayedTimeline
                               }
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeProjectId={activeProject?.id ?? null}

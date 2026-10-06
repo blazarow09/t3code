@@ -3,7 +3,7 @@ import {
   EnvironmentId,
   ProviderInstanceId,
   ThreadId,
-  TurnId,
+  RunId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -15,16 +15,16 @@ function fixture() {
     thread: {
       id: ThreadId.make("thread-1"),
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
-      latestTurn: {
-        turnId: TurnId.make("turn-1"),
-        state: "completed" as const,
+      latestRun: {
+        runId: RunId.make("turn-1"),
+        status: "completed" as const,
         requestedAt: "2026-10-01T12:00:00Z",
         startedAt: "2026-10-01T12:00:00Z",
         completedAt: "2026-10-01T12:01:00Z",
         assistantMessageId: null,
       },
       latestUserMessageAt: "2026-10-01T12:00:00Z",
-      session: null,
+      runtime: null,
       hasPendingApprovals: false,
       hasPendingUserInput: false,
     },
@@ -79,14 +79,14 @@ describe("prompt suggestion eligibility", () => {
     },
   );
 
-  it.each(["running", "interrupted", "error"] as const)(
+  it.each(["running", "interrupted", "failed"] as const)(
     "requires a successful completion, not %s",
-    (state) => {
+    (status) => {
       const input = fixture();
       expect(
         promptSuggestionContext({
           ...input,
-          thread: { ...input.thread, latestTurn: { ...input.thread.latestTurn, state } },
+          thread: { ...input.thread, latestRun: { ...input.thread.latestRun, status } },
         }),
       ).toBeNull();
     },
@@ -138,7 +138,7 @@ describe("prompt suggestion lifecycle", () => {
       lifecycle.update(oldContext);
       const oldTicket = lifecycle.begin()!;
       if (change === "thread") input.thread.id = ThreadId.make("thread-2");
-      if (change === "turn") input.thread.latestTurn.turnId = TurnId.make("turn-2");
+      if (change === "turn") input.thread.latestRun.runId = RunId.make("turn-2");
       if (change === "environment") input.environmentId = EnvironmentId.make("environment-2");
       if (change === "settings")
         input.settings.providerInstances.codex.promptSuggestions.model = "gpt-5-nano";
@@ -167,7 +167,7 @@ describe("prompt suggestion lifecycle", () => {
     expect(lifecycle.resolve(pendingTicket, "Ignored")).toBe(false);
     expect(lifecycle.read(context)).toBeNull();
     expect(lifecycle.begin()).toBeNull();
-    input.thread.latestTurn.turnId = TurnId.make("turn-2");
+    input.thread.latestRun.runId = RunId.make("turn-2");
     context = promptSuggestionContext(input);
     lifecycle.update(context);
     lifecycle.resolve(lifecycle.begin()!, "Visible");

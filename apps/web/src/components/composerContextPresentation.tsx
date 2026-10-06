@@ -372,19 +372,6 @@ function UnresolvedContextChip(props: { label: string }) {
  * A conversation reference carries no draft record — the id is inside the link and the title is
  * its label — so this renders from the label alone rather than waiting on a lookup.
  */
-function ThreadContextChip(props: { label: string }) {
-  return (
-    <ContextChip
-      icon={<MessagesSquareIcon />}
-      label={props.label}
-      kindLabel="Conversation"
-      details="Referenced conversation. Its context is read on demand, not inlined."
-      detailsMode="tooltip"
-      kind="thread"
-    />
-  );
-}
-
 interface ComposerContextRenderContext {
   label: string;
 }
@@ -511,7 +498,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
   ],
   fallback: (kind, _entry, context) =>
     kind === "thread" ? (
-      <ThreadContextChip label={context.label} />
+      <UnresolvedContextChip label={context.label} />
     ) : (
       <UnresolvedContextChip label={context.label} />
     ),

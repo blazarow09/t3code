@@ -45,6 +45,7 @@ export interface CreateProjectInput extends CommandMetadata {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string;
+  readonly additionalDirectories?: ReadonlyArray<string>;
   readonly createWorkspaceRootIfMissing?: boolean;
   readonly defaultModelSelection?: ModelSelection | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
@@ -54,6 +55,7 @@ export interface UpdateProjectInput extends CommandMetadata {
   readonly projectId: ProjectId;
   readonly title?: string;
   readonly workspaceRoot?: string;
+  readonly additionalDirectories?: ReadonlyArray<string>;
   readonly defaultModelSelection?: ModelSelection | null;
   readonly autoPull?: boolean;
   readonly projectIcon?: ProjectIconOverride | null;
@@ -305,6 +307,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly projectId: ProjectId;
         readonly title: string;
         readonly workspaceRoot: string;
+        readonly additionalDirectories?: ReadonlyArray<string>;
         readonly createWorkspaceRootIfMissing?: boolean;
         readonly defaultModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
@@ -315,6 +318,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly projectId: ProjectId;
         readonly title?: string;
         readonly workspaceRoot?: string;
+        readonly additionalDirectories?: ReadonlyArray<string>;
         readonly defaultModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
       }
@@ -343,6 +347,9 @@ export const createProject = Effect.fn("EnvironmentCommands.createProject")(func
     ...(input.defaultModelSelection === undefined
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),
+    ...(input.additionalDirectories === undefined
+      ? {}
+      : { additionalDirectories: input.additionalDirectories }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
   });
 });
@@ -365,6 +372,9 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
     ...(input.defaultThreadEnvMode === undefined
       ? {}
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+    ...(input.additionalDirectories === undefined
+      ? {}
+      : { additionalDirectories: input.additionalDirectories }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
   });
 });

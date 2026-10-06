@@ -14,6 +14,10 @@ import {
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
 import {
+  PROMPT_SUGGESTION_SYSTEM_PROMPT,
+  PROMPT_SUGGESTION_TIMEOUT_MS,
+} from "@t3tools/provider-core/server/textGenerationPrompts";
+import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
@@ -183,7 +187,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
       const workingDirectory =
-        operation === "generateThreadTitle"
+        operation === "generateThreadTitle" || operation === "generatePromptSuggestion"
           ? yield* fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
               .pipe(
@@ -203,6 +207,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           jsonSchemaStr,
           "--model",
           resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
+          ...(operation === "generatePromptSuggestion"
+            ? ["--system-prompt", PROMPT_SUGGESTION_SYSTEM_PROMPT, "--no-session-persistence"]
+            : []),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
           settingsJson,
@@ -275,7 +282,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
     const rawStdout = yield* runClaudeCommand().pipe(
       Effect.scoped,
-      Effect.timeoutOption(investigate?.timeoutMs ?? CLAUDE_TIMEOUT_MS),
+      Effect.timeoutOption(investigate?.timeoutMs ?? (operation === "generatePromptSuggestion" ? PROMPT_SUGGESTION_TIMEOUT_MS : CLAUDE_TIMEOUT_MS)),
       Effect.flatMap(
         Option.match({
           onNone: () =>

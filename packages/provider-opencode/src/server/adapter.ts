@@ -679,6 +679,13 @@ export function openCodePermissionRules(
     }
   }
 
+  for (const directory of runtimePolicy.additionalDirectories ?? []) {
+    rules.push({
+      permission: "external_directory",
+      pattern: `${directory.replace(/[\\/]+$/, "")}/*`,
+      action: "allow",
+    });
+  }
   return rules;
 }
 
@@ -3252,6 +3259,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               const systemPrompt = [
                 orchestrationSystemPrompt,
                 buildRuntimeInstructions({
+                  additionalDirectories: turnInput.runtimePolicy.additionalDirectories,
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
                 }),

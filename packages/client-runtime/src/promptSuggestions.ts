@@ -1,11 +1,11 @@
+import type { EnvironmentThreadShell } from "./state/models.ts";
 import {
-  ORCHESTRATION_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   resolveProviderInstanceEnabled,
   type EnvironmentId,
-  type OrchestrationThreadShell,
   type ServerSettings,
 } from "@t3tools/contracts";
-import type { Atom } from "effect/unstable/reactivity";
+import type { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "./connection/registry.ts";
 import { createEnvironmentRpcCommand } from "./state/runtime.ts";
@@ -15,7 +15,7 @@ export function createPromptSuggestionCommand<R, E>(
 ) {
   return createEnvironmentRpcCommand(runtime, {
     label: "prompt-suggestion",
-    tag: ORCHESTRATION_WS_METHODS.getPromptSuggestion,
+    tag: ORCHESTRATION_V2_WS_METHODS.getPromptSuggestion,
   });
 }
 
@@ -23,12 +23,12 @@ export function promptSuggestionContext(input: {
   readonly environmentId: EnvironmentId;
   readonly thread:
     | Pick<
-        OrchestrationThreadShell,
+        EnvironmentThreadShell,
         | "id"
         | "modelSelection"
-        | "latestTurn"
+        | "latestRun"
         | "latestUserMessageAt"
-        | "session"
+        | "runtime"
         | "hasPendingApprovals"
         | "hasPendingUserInput"
       >
@@ -40,7 +40,7 @@ export function promptSuggestionContext(input: {
   readonly blocked: boolean;
 }) {
   const { thread, settings } = input;
-  const turn = thread?.latestTurn;
+  const run = thread?.latestRun;
   const provider = thread && settings?.providerInstances[thread.modelSelection.instanceId];
   const config = provider?.promptSuggestions;
   if (
@@ -55,20 +55,20 @@ export function promptSuggestionContext(input: {
     !thread ||
     thread.hasPendingApprovals ||
     thread.hasPendingUserInput ||
-    turn?.state !== "completed" ||
-    turn.completedAt === null ||
-    thread.session?.status === "running" ||
-    thread.session?.status === "starting" ||
-    thread.session?.status === "error" ||
+    run?.status !== "completed" ||
+    run.completedAt === null ||
+    thread.runtime?.status === "running" ||
+    thread.runtime?.status === "starting" ||
+    thread.runtime?.status === "failed" ||
     (thread.latestUserMessageAt !== null &&
-      Date.parse(thread.latestUserMessageAt) > Date.parse(turn.completedAt))
+      Date.parse(thread.latestUserMessageAt) > Date.parse(run.completedAt))
   ) {
     return null;
   }
-  const turnKey = JSON.stringify([input.environmentId, thread.id, turn.turnId]);
+  const turnKey = JSON.stringify([input.environmentId, thread.id, run.runId]);
   return {
     environmentId: input.environmentId,
-    input: { threadId: thread.id, turnId: turn.turnId },
+    input: { threadId: thread.id, runId: run.runId },
     turnKey,
     key: JSON.stringify([turnKey, thread.modelSelection.instanceId, config]),
   };

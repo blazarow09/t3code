@@ -1,6 +1,8 @@
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { promptSuggestionContext } from "@t3tools/client-runtime/prompt-suggestions";
+import { usePromptSuggestion } from "./use-prompt-suggestion";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
@@ -612,6 +614,20 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     props.sendBlockedReason ??
     (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
     attachmentBlockReason;
+  const { suggestion: promptSuggestion, dismiss: dismissPromptSuggestion } = usePromptSuggestion(
+    promptSuggestionContext({
+      environmentId: props.environmentId,
+      thread: props.selectedThread,
+      settings: props.serverConfig?.settings,
+      available: props.connectionState === "connected",
+      draftEmpty: props.draftMessage.length === 0 && props.draftAttachments.length === 0,
+      blocked:
+        props.activeThreadBusy ||
+        props.queueCount > 0 ||
+        sendBlockedReason !== null ||
+        queuedEdit !== null,
+    }),
+  );
   const canSend =
     (props.canOperateThread || props.connectionState !== "connected") &&
     hasContent &&
@@ -1025,7 +1041,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 skills={composerMenu.skills}
                 selection={composerMenu.selection}
                 onChangeText={(text) => {
-                  if (!isSubmissionLocked) props.onChangeDraftMessage(text);
+                  if (!isSubmissionLocked) {
+                    dismissPromptSuggestion();
+                    props.onChangeDraftMessage(text);
+                  }
                 }}
                 onSelectionChange={composerMenu.onSelectionChange}
                 onPasteImages={(uris) => {
@@ -1099,7 +1118,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   }
                   insertPaste();
                 }}
-                placeholder={props.placeholder}
+                placeholder={promptSuggestion ?? props.placeholder}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
                 onSubmit={(alternate) =>

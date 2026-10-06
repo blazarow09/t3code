@@ -1,3 +1,4 @@
+import { PromptSuggestionSettings } from "./PromptSuggestionSettings";
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -1189,6 +1190,13 @@ export function ProviderInstanceCard({
           ) : null}
         </SettingsSection>
       ) : null}
+
+      <PromptSuggestionSettings
+        instance={instance}
+        provider={liveProvider}
+        readOnly={readOnly}
+        onUpdate={onUpdate}
+      />
 
       {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed" ? (
         <div

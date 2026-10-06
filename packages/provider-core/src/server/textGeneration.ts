@@ -96,8 +96,25 @@ export type ReviewGuideGenerationResult = Omit<
   PullRequestReviewGuide,
   "headSha" | "generatedAt" | "modelSelection"
 >;
+export interface PromptSuggestionGenerationInput {
+  cwd: string;
+  userMessage: string;
+  assistantMessage: string;
+  modelSelection: ModelSelection;
+}
+
+export interface PromptSuggestionGenerationResult {
+  suggestion: string | null;
+}
 
 export interface ProviderTextGeneration {
+  /** Suggest one concrete follow-up from the latest user message and final reply. */
+  readonly generatePromptSuggestion: (
+    input: PromptSuggestionGenerationInput,
+  ) => Effect.Effect<PromptSuggestionGenerationResult, TextGenerationError>;
+  /**
+   * Generate a commit message from staged change context.
+   */
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;

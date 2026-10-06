@@ -12,11 +12,13 @@ import {
   buildPrContentPrompt,
   buildReviewGuidePrompt,
   buildThreadTitlePrompt,
+  buildPromptSuggestionPrompt,
 } from "./textGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
+  sanitizePromptSuggestion,
 } from "./textGenerationUtils.ts";
 
 export type Operation = keyof ProviderTextGeneration;
@@ -70,6 +72,17 @@ export const decodeJsonReply = <S extends Schema.Top>(
 };
 
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
+  const generatePromptSuggestion: ProviderTextGeneration["generatePromptSuggestion"] = Effect.fn(
+    `${name}.generatePromptSuggestion`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generatePromptSuggestion",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildPromptSuggestionPrompt(input),
+    });
+    return { suggestion: sanitizePromptSuggestion(generated.suggestion) };
+  });
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     `${name}.generateCommitMessage`,
   )(function* (input) {
@@ -168,6 +181,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   });
 
   return {
+    generatePromptSuggestion,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

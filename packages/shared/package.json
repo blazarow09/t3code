@@ -431,6 +431,10 @@
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
     },
+    "./promptSuggestions": {
+      "types": "./src/promptSuggestions.ts",
+      "import": "./src/promptSuggestions.ts"
+    },
     "./codexArtifactTemplates": {
       "types": "./src/codexArtifactTemplates.ts",
       "import": "./src/codexArtifactTemplates.ts"

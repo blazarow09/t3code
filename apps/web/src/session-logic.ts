@@ -1090,3 +1090,8 @@ export function deriveCanInterruptRunningThread(
 }
 
 export type { TurnDiffSummary };
+
+export interface AgentToolActivityEntry {
+  readonly at: string;
+  readonly label: string;
+}

@@ -1670,6 +1670,15 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
+const WsOrchestrationV2GetPromptSuggestionRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getPromptSuggestion,
+  {
+    payload: OrchestrationV2RpcSchemas.getPromptSuggestion.input,
+    success: OrchestrationV2RpcSchemas.getPromptSuggestion.output,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2109,6 +2118,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsOrchestrationV2GetPromptSuggestionRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopWorkflowRpc,
