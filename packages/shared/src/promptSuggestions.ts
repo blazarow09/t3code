@@ -1,5 +1,4 @@
 import {
-  defaultInstanceIdForDriver,
   type ServerSettings,
   type ServerProvider,
   type ProviderInstanceConfig,
@@ -8,16 +7,13 @@ import {
 } from "@t3tools/contracts";
 
 export function promptSuggestionProviderInstance(
-  settings: Pick<ServerSettings, "providerInstances" | "providers">,
+  settings: Pick<ServerSettings, "providerInstances">,
   provider: Pick<ServerProvider, "instanceId" | "driver" | "enabled">,
 ): ProviderInstanceConfig {
   return (
     settings.providerInstances[provider.instanceId] ?? {
       driver: provider.driver,
       enabled: provider.enabled,
-      ...(provider.instanceId === defaultInstanceIdForDriver(provider.driver)
-        ? { config: settings.providers[provider.driver as keyof typeof settings.providers] ?? {} }
-        : {}),
     }
   );
 }

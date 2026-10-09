@@ -1,8 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildPromptSuggestionPrompt } from "./TextGenerationPrompts.ts";
-import { sanitizePromptSuggestion, toJsonSchemaObject } from "./TextGenerationUtils.ts";
+import { buildPromptSuggestionPrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
+import {
+  sanitizePromptSuggestion,
+  toJsonSchemaObject,
+} from "@t3tools/provider-core/server/textGenerationUtils";
 
 describe("prompt suggestions", () => {
   it.each([

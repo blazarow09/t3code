@@ -26,7 +26,7 @@ import { makePromptSuggestions } from "./promptSuggestions.ts";
 import { layerMemory as SqlitePersistenceMemory } from "./persistence/Sqlite.ts";
 import { ThreadManagementService } from "./orchestration-v2/ThreadManagementService.ts";
 import { ProjectStoreV2 } from "./orchestration-v2/ProjectStore.ts";
-import type { ProviderInstance } from "./provider/ProviderDriver.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { ProviderInstanceRegistry } from "./provider/ProviderInstanceRegistry.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import type { PromptSuggestionGenerationInput } from "./textGeneration/TextGeneration.ts";

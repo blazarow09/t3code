@@ -2693,9 +2693,8 @@ function OpenCommandPaletteDialog(props: {
           Loading folders...
         </div>
       ) : null}
-      <CommandPaletteVirtualizedResults
-        rows={resultRows.rows}
-        listRef={resultListRef}
+      <CommandPaletteResults
+        groups={displayedGroups}
         highlightedItemValue={highlightedItemValue}
         isActionsOnly={isActionsOnly}
         keybindings={keybindings}

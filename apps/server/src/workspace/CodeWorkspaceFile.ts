@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 // entry so the server bundle inlines the parser instead of the UMD wrapper.
 import { parse as parseJsonc, type ParseError } from "jsonc-parser/lib/esm/main.js";
 
-import { expandHomePathWith } from "../pathExpansion.ts";
+import { expandHomePathWith } from "@t3tools/provider-core/server/pathExpansion";
 
 export const CODE_WORKSPACE_EXTENSION = ".code-workspace";
 

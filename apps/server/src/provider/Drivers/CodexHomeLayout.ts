@@ -11,10 +11,6 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import {
-  holdCodexShadowSqliteSidecar,
-  releaseCodexShadowSqliteSidecar,
-} from "./CodexShadowSqliteGuard.ts";
 
 export interface CodexHomeLayout {
   readonly mode: "direct" | "authOverlay";

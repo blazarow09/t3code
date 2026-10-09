@@ -302,14 +302,54 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       });
                     }}
                   />
-                  {config.providers.map((provider) => (
-                    <View key={provider.instanceId}>
-                      <View className="gap-1 p-4">
-                        <View className="flex-row items-center gap-2">
-                          <ProviderIcon provider={provider.driver} size={18} />
-                          <Text className="min-w-0 flex-1 text-base font-t3-medium text-foreground">
-                            {provider.displayName ?? provider.driver}
+                  {config.providers
+                    .filter((provider) => provider.enabled)
+                    .map((provider) => (
+                      <View key={provider.instanceId}>
+                        <View className="gap-1 p-4">
+                          <View className="flex-row items-center gap-2">
+                            <ProviderIcon provider={provider.driver} size={18} />
+                            <Text className="min-w-0 flex-1 text-base font-t3-medium text-foreground">
+                              {provider.displayName ?? provider.driver}
+                            </Text>
+                          </View>
+                          <Text className="text-sm text-foreground-muted">
+                            {provider.installed
+                              ? (provider.version ?? "Version unknown")
+                              : "Not installed"}
+                            {provider.versionAdvisory?.latestVersion
+                              ? ` · Latest ${provider.versionAdvisory.latestVersion}`
+                              : ""}
                           </Text>
+                          {provider.updateState && provider.updateState.status !== "idle" ? (
+                            <Text
+                              selectable
+                              className={
+                                provider.updateState.status === "failed"
+                                  ? "text-sm text-danger-foreground"
+                                  : "text-sm text-foreground-muted"
+                              }
+                            >
+                              {provider.updateState.message ??
+                                `Update ${provider.updateState.status}`}
+                            </Text>
+                          ) : null}
+                          {provider.compatibilityAdvisory?.message ? (
+                            <Text selectable className="text-sm text-foreground-muted">
+                              {provider.compatibilityAdvisory.message}
+                            </Text>
+                          ) : null}
+                          {provider.unavailableReason || provider.message ? (
+                            <Text selectable className="text-sm text-foreground-muted">
+                              {provider.unavailableReason ?? provider.message}
+                            </Text>
+                          ) : null}
+                          {provider.versionAdvisory?.status === "behind_latest" &&
+                          !provider.versionAdvisory.canUpdate ? (
+                            <Text className="text-sm text-foreground-muted">
+                              Update this provider on the environment's machine.
+                            </Text>
+                          ) : null}
                         </View>
                         {canUpdateEnvironmentProvider(provider) ? (
                           <SettingsActionRow
@@ -320,33 +360,32 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                             onPress={() => requestProviderUpdate(provider)}
                           />
                         ) : null}
-                      </View>
-                      <PromptSuggestionProviderSettings
-                        provider={provider}
-                        instance={promptSuggestionProviderInstance(config.settings, provider)}
-                        disabled={disabled}
-                        onChange={(promptSuggestions) => {
-                          void run("prompt-suggestions", async () => {
-                            const result = await updateSettings({
-                              environmentId,
-                              input: {
-                                patch: {
-                                  providerInstances: updatePromptSuggestionInstance(
-                                    config.settings.providerInstances,
-                                    provider.instanceId,
-                                    promptSuggestionProviderInstance(config.settings, provider),
-                                    promptSuggestions,
-                                  ),
+                        <PromptSuggestionProviderSettings
+                          provider={provider}
+                          instance={promptSuggestionProviderInstance(config.settings, provider)}
+                          disabled={disabled}
+                          onChange={(promptSuggestions) => {
+                            void run("prompt-suggestions", async () => {
+                              const result = await updateSettings({
+                                environmentId,
+                                input: {
+                                  patch: {
+                                    providerInstances: updatePromptSuggestionInstance(
+                                      config.settings.providerInstances,
+                                      provider.instanceId,
+                                      promptSuggestionProviderInstance(config.settings, provider),
+                                      promptSuggestions,
+                                    ),
+                                  },
                                 },
-                              },
+                              });
+                              if (AsyncResult.isFailure(result))
+                                throw squashAtomCommandFailure(result);
                             });
-                            if (AsyncResult.isFailure(result))
-                              throw squashAtomCommandFailure(result);
-                          });
-                        }}
-                      />
-                    </View>
-                  ))}
+                          }}
+                        />
+                      </View>
+                    ))}
                 </SettingsSection>
               </>
             ) : null}

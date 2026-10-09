@@ -65,12 +65,16 @@ describe("prompt suggestion settings", () => {
       reasoningEffort: "low",
     });
   });
-  it("keeps legacy runtime settings when materializing a default instance", () => {
+  it("keeps existing instance settings and creates a fallback for unconfigured instances", () => {
     const settings = {
       ...DEFAULT_SERVER_SETTINGS,
-      providers: {
-        ...DEFAULT_SERVER_SETTINGS.providers,
-        codex: { ...DEFAULT_SERVER_SETTINGS.providers.codex, binaryPath: "custom-codex" },
+      providerInstances: {
+        ...DEFAULT_SERVER_SETTINGS.providerInstances,
+        [ProviderInstanceId.make("codex")]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: { binaryPath: "custom-codex" },
+        },
       },
     };
     const provider = {
