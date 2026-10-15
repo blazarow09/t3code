@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { UsageAggregator, type AggregateOptions } from "./usageAggregation.ts";
-import { EMPTY_TOTALS } from "./usageTranscripts.ts";
+import { EMPTY_TOTALS } from "@t3tools/provider-core/server/usage";
 import { priceUsage } from "./usagePricing.ts";
 
 type Outcome = "generated" | "empty" | "failed" | "timedOut" | "interrupted";

@@ -164,6 +164,7 @@ function workflowMembersToRuntime(
       phases: [],
       childThreadId: agent.childThreadId ?? null,
       recentActivity: [],
+      transcript: [],
       firstSeenAt: isoFromEpochMillis(agent.queuedAt) ?? startedAt ?? coordinator.firstSeenAt,
       startedAt,
       completedAt,

@@ -176,8 +176,14 @@ describe("composer usage meter", () => {
   });
 
   it("uses leftover spend for the circle and falls back to context", () => {
-    expect(composerUsageCircleUsedPercent({ leftoverUsedPercent: 12, contextUsedPercentage: 80 })).toBe(12);
-    expect(composerUsageCircleUsedPercent({ leftoverUsedPercent: null, contextUsedPercentage: 140 })).toBe(100);
-    expect(composerUsageCircleUsedPercent({ leftoverUsedPercent: null, contextUsedPercentage: null })).toBeNull();
+    expect(
+      composerUsageCircleUsedPercent({ leftoverUsedPercent: 12, contextUsedPercentage: 80 }),
+    ).toBe(12);
+    expect(
+      composerUsageCircleUsedPercent({ leftoverUsedPercent: null, contextUsedPercentage: 140 }),
+    ).toBe(100);
+    expect(
+      composerUsageCircleUsedPercent({ leftoverUsedPercent: null, contextUsedPercentage: null }),
+    ).toBeNull();
   });
 });

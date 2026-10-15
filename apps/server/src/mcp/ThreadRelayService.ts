@@ -231,7 +231,7 @@ const make = Effect.gen(function* () {
         const queued = records.runs.filter((run) => run.status === "queued").length;
         if (queued >= SEND_TO_THREAD_MAX_QUEUE)
           return yield* new ThreadQueueFullError({ threadId });
-        const uuid = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
         const result = yield* threads
           .sendToThread({
             projectId: target.projectId,

@@ -7705,7 +7705,7 @@ it.effect("grants configured project folders in Codex workspace sandbox and runt
     assert.include(params.additionalContext?.t3_code_runtime?.value ?? "", "/shared-library");
     assert.deepEqual(
       CodexAdapterV2.codexThreadRuntimeParams({
-        threadId: null,
+        mcpSession: undefined,
         runtimePolicy: {
           runtimeMode: "auto-accept-edits",
           interactionMode: "default",

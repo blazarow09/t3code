@@ -387,7 +387,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const execLaunchArgs = codexExecLaunchArgs(launchArgs);
       const mcpServersOff = yield* listEnabledMcpServers({
         binary,
-        cwd,
+        cwd: workingDirectory,
         env,
         // `codex mcp` rejects --strict-config; the overrides still apply.
         launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
@@ -530,7 +530,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         Effect.ensuring(reportUsage),
         Effect.scoped,
         // The read-only sandbox already holds an investigation to reading; it only needs longer.
-        Effect.timeoutOption(investigate?.timeoutMs ?? (suggestion ? PROMPT_SUGGESTION_TIMEOUT_MS : CODEX_TIMEOUT_MS)),
+        Effect.timeoutOption(
+          investigate?.timeoutMs ?? (suggestion ? PROMPT_SUGGESTION_TIMEOUT_MS : CODEX_TIMEOUT_MS),
+        ),
         Effect.flatMap(
           Option.match({
             onNone: () =>

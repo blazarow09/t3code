@@ -1,4 +1,8 @@
-import { McpCapabilityUnavailableError, TrimmedNonEmptyString } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  McpCapabilityUnavailableError,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
@@ -143,6 +147,7 @@ export class ThreadSendFailedError extends Schema.TaggedError<ThreadSendFailedEr
 }
 
 export const ThreadToolError = Schema.Union([
+  OrchestratorMcpFailure,
   McpCapabilityUnavailableError,
   ThreadSearchFailedError,
   ThreadNotFoundError,

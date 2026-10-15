@@ -4,6 +4,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  RunId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -17,6 +18,8 @@ import * as Search from "../../../orchestration-v2/ThreadSearch.ts";
 import * as Projects from "../../../orchestration-v2/ProjectStore.ts";
 import * as Invocation from "../../McpInvocationContext.ts";
 import { ThreadsToolkit } from "./tools.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as ThreadRelayService from "../../ThreadRelayService.ts";
 import { ThreadsToolkitHandlersLive } from "./handlers.ts";
 const source = ThreadId.make("source");
 const target = ThreadId.make("target");
@@ -32,7 +35,12 @@ const makeHarness = Effect.gen(function* () {
     title: "Target",
     status: "idle",
     latestRunId: null,
-    activeRunId: null,
+    activeRunId: RunId.make("source-run"),
+    deletedAt: null,
+    archivedAt: null,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    providerInstanceId: instanceId,
   } as OrchestrationV2ThreadShell;
   const dependencies = Layer.mergeAll(
     NodeCrypto.layer,
@@ -81,7 +89,12 @@ const makeHarness = Effect.gen(function* () {
     }),
   );
   const toolkit = yield* ThreadsToolkit.pipe(
-    Effect.provide(ThreadsToolkitHandlersLive.pipe(Layer.provide(dependencies))),
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(ThreadsToolkitHandlersLive).pipe(
+        Layer.provide(ThreadRelayService.layer),
+        Layer.provide(dependencies),
+      ),
+    ),
   );
   return {
     sent,

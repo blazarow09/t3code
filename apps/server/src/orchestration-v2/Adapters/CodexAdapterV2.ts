@@ -6842,9 +6842,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
-                  mcpSession: yield* readMcpSession(
-                    threadInput.threadId ?? threadInput.providerThread.appThreadId,
-                  ),
+                  mcpSession,
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),
@@ -6866,8 +6864,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                               threadId: nativeThreadId,
                               excludeTurns: false,
                               ...codexThreadRuntimeParams({
-                                threadId:
-                                  threadInput.threadId ?? threadInput.providerThread.appThreadId,
+                                mcpSession,
                                 ...(threadInput.modelSelection
                                   ? { modelSelection: threadInput.modelSelection }
                                   : {}),
@@ -6885,9 +6882,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                                   client.raw.request(
                                     "thread/start",
                                     codexThreadRuntimeParams({
-                                      threadId:
-                                        threadInput.threadId ??
-                                        threadInput.providerThread.appThreadId,
+                                      mcpSession,
                                       ...(threadInput.modelSelection
                                         ? { modelSelection: threadInput.modelSelection }
                                         : {}),

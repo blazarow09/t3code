@@ -16,7 +16,15 @@ import * as Schema from "effect/Schema";
 // entry so the server bundle inlines the parser instead of the UMD wrapper.
 import { parse as parseJsonc, type ParseError } from "jsonc-parser/lib/esm/main.js";
 
-import { expandHomePathWith } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
+function expandWorkspaceHome(value: string, path: Pick<Path.Path, "join">, home?: string): string {
+  if (home === undefined) return value;
+  if (value === "~") return home;
+  return value.startsWith("~/") || value.startsWith("~\\")
+    ? path.join(home, value.slice(2))
+    : value;
+}
 
 export const CODE_WORKSPACE_EXTENSION = ".code-workspace";
 
@@ -46,6 +54,7 @@ const isInsideOrEqual = (root: string, candidate: string) => {
 /** Pure mapping from file text to a project shape, using the host's path rules. */
 export function mapCodeWorkspace(input: {
   readonly filePath: string;
+  readonly home?: string;
   readonly text: string;
   readonly path: Pick<Path.Path, "basename" | "dirname" | "join" | "resolve">;
 }): FilesystemReadCodeWorkspaceResult | string {
@@ -68,7 +77,7 @@ export function mapCodeWorkspace(input: {
     if (typeof folderPath !== "string" || folderPath.trim().length === 0) continue;
     const resolved = input.path.resolve(
       workspaceRoot,
-      expandHomePathWith(folderPath.trim(), input.path),
+      expandWorkspaceHome(folderPath.trim(), input.path, input.home),
     );
     if (isInsideOrEqual(workspaceRoot, resolved)) continue;
     const key = normalizeProjectPathForComparison(resolved);
@@ -93,7 +102,8 @@ export const readCodeWorkspace = Effect.fn("CodeWorkspaceFile.readCodeWorkspace"
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const resolvedPath = path.resolve(expandHomePathWith(filePath.trim(), path));
+  const home = yield* HostProcess.HomeDirectory;
+  const resolvedPath = path.resolve(expandWorkspaceHome(filePath.trim(), path, home));
   if (!resolvedPath.toLowerCase().endsWith(CODE_WORKSPACE_EXTENSION)) {
     return yield* new CodeWorkspaceFileError({
       path: resolvedPath,
@@ -110,7 +120,7 @@ export const readCodeWorkspace = Effect.fn("CodeWorkspaceFile.readCodeWorkspace"
         }),
     ),
   );
-  const result = mapCodeWorkspace({ filePath: resolvedPath, text, path });
+  const result = mapCodeWorkspace({ filePath: resolvedPath, text, path, home });
   if (typeof result === "string") {
     return yield* new CodeWorkspaceFileError({ path: resolvedPath, detail: result });
   }

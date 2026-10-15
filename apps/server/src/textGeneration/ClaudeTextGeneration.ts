@@ -381,7 +381,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
     const rawStdout = yield* runClaudeCommand().pipe(
       Effect.scoped,
-      Effect.timeoutOption(investigate?.timeoutMs ?? (operation === "generatePromptSuggestion" ? PROMPT_SUGGESTION_TIMEOUT_MS : CLAUDE_TIMEOUT_MS)),
+      Effect.timeoutOption(
+        investigate?.timeoutMs ??
+          (operation === "generatePromptSuggestion"
+            ? PROMPT_SUGGESTION_TIMEOUT_MS
+            : CLAUDE_TIMEOUT_MS),
+      ),
       Effect.flatMap(
         Option.match({
           onNone: () =>
