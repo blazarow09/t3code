@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
-import { isHeicImageFile } from "../../lib/imageCompression";
+import { isAvifImageFile, isHeicImageFile } from "../../lib/imageCompression";
 import { isVideoAttachment, videoMimeType } from "../../types";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
@@ -86,7 +86,7 @@ export function classifyComposerAttachmentFile(
 ): ComposerAttachmentFileKind {
   if (isSvgAttachment({ name: file.name, mimeType: file.type })) return "file";
   if (isDngFile(file)) return "file";
-  if (isHeicImageFile(file)) {
+  if (isHeicImageFile(file) || isAvifImageFile(file)) {
     return "image";
   }
   if (inferImageMimeTypeForUnknownFile(file)) {

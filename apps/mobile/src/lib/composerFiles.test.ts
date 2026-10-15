@@ -152,7 +152,7 @@ describe("composer file attachments", () => {
       });
     });
 
-    it.each(["image/heic", "image/heif", undefined])(
+    it.each(["image/heic", "image/heif", "image/avif", undefined])(
       "renders a %s photo to JPEG natively and previews the rendered file",
       async (mimeType) => {
         mocks.pickMedia.mockResolvedValue({

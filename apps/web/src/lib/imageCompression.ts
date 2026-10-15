@@ -50,6 +50,15 @@ export function isHeicImageFile(file: Pick<File, "name" | "type">): boolean {
   );
 }
 
+/** AVIF is decoded locally because provider image inputs cannot carry it. */
+export function isAvifImageFile(file: Pick<File, "name" | "type">): boolean {
+  return (
+    file.type.toLowerCase() === "image/avif" ||
+    ((file.type === "" || file.type.toLowerCase() === "application/octet-stream") &&
+      /\.avif$/i.test(file.name))
+  );
+}
+
 interface HeicMetadataBox {
   payloadOffset: number;
   endOffset: number;
@@ -458,6 +467,22 @@ export async function prepareImageForAttachment(
   file: File,
   maxBytes: number,
 ): Promise<CompressImageFileResult> {
+  if (isAvifImageFile(file)) {
+    if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
+      return { ok: false, reason: "too-large" };
+    }
+    const result = await reencodeWithinBudget(file, Math.floor(maxBytes / 3) * 4);
+    if (!result.ok) return result;
+    return {
+      ok: true,
+      file: new File([result.blob], fileNameForMimeType(file.name || "image", result.mimeType), {
+        type: result.mimeType,
+        lastModified: file.lastModified,
+      }),
+      recompressed: true,
+      imageSize: result.imageSize,
+    };
+  }
   if (!isHeicImageFile(file)) {
     return compressImageToByteLimit(file, maxBytes);
   }

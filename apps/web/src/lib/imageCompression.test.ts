@@ -141,6 +141,45 @@ afterEach(() => {
   globalThis.OffscreenCanvas = originalOffscreenCanvas;
 });
 
+describe("AVIF attachments", () => {
+  it.each(["image/avif", "", "application/octet-stream"])(
+    "converts even a small %s AVIF to provider-compatible WebP",
+    async (type) => {
+      const { close } = stubCanvasPipeline(() => 100);
+      const file = new File(["avif"], "photo.AVIF", { type, lastModified: 123 });
+      const result = await prepareImageForAttachment(file, 1024);
+      expect(result).toMatchObject({
+        ok: true,
+        recompressed: true,
+        file: { name: "photo.webp", type: "image/webp", size: 100, lastModified: 123 },
+      });
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("falls back to JPEG when WebP encoding is unavailable", async () => {
+    stubCanvasPipeline(() => 100, { supportsWebp: false });
+    const result = await prepareImageForAttachment(makeFile(10, "image/avif"), 1024);
+    expect(result).toMatchObject({ ok: true, file: { name: "shot.jpg", type: "image/jpeg" } });
+  });
+
+  it("reports unreadable AVIF instead of sending unsupported bytes", async () => {
+    stubCanvasPipeline(() => 100);
+    vi.stubGlobal("createImageBitmap", vi.fn().mockRejectedValue(new Error("Invalid AVIF")));
+    expect(await prepareImageForAttachment(makeFile(10, "image/avif"), 1024)).toEqual({
+      ok: false,
+      reason: "unreadable",
+    });
+  });
+
+  it("refuses oversized sources before decoding", async () => {
+    stubCanvasPipeline(() => 100);
+    const file = makeFile(MAX_COMPRESSIBLE_SOURCE_BYTES + 1, "image/avif");
+    expect(await prepareImageForAttachment(file, 1024)).toEqual({ ok: false, reason: "too-large" });
+    expect(createImageBitmap).not.toHaveBeenCalled();
+  });
+});
+
 describe("compressImageForStash", () => {
   it("keeps the exact data URL budget boundary and original bytes", async () => {
     const original = makeFile(3);
