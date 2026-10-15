@@ -567,7 +567,7 @@ function SidebarUpdateControl() {
           <PopoverPopup
             align="center"
             aria-label={state.customSync ? "Upstream commits" : "Nightly update release notes"}
-            className="max-w-none text-balance shadow-xl shadow-black/25"
+            className="max-w-none"
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

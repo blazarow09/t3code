@@ -69,7 +69,7 @@ function CustomSyncSummary({
         </div>
         <button
           type="button"
-          className="mt-3 inline-flex h-7 items-center justify-center rounded-md border border-border bg-secondary px-2.5 text-xs font-medium text-secondary-foreground outline-none hover:bg-secondary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-3 inline-flex h-7 items-center justify-center rounded-md border border-border bg-secondary px-2.5 text-xs font-medium text-secondary-foreground outline-none hover:bg-secondary/90 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
           disabled={syncPending || onStartSync === undefined}
           onClick={(event) => {
             event.preventDefault();
