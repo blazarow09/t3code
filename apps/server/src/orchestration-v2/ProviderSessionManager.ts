@@ -1406,6 +1406,7 @@ export const layerWithOptions = (
         providerSessionId: ProviderSessionId,
         providerThreadId: ProviderThreadId,
         runOrdinal: number,
+        resetTransport = false,
       ) =>
         withActivityError(
           providerSessionId,
@@ -1426,7 +1427,7 @@ export const layerWithOptions = (
               return updated;
             });
             yield* scheduleIdleReleaseInternal(providerSessionId);
-            yield* scheduleThreadUnload(providerSessionId, providerThreadId);
+            yield* scheduleThreadUnload(providerSessionId, providerThreadId, resetTransport);
           }),
         );
 
@@ -1491,7 +1492,7 @@ export const layerWithOptions = (
       );
 
       const scheduleThreadUnload = Effect.fn("ProviderSessionManager.scheduleThreadUnload")(
-        function* (providerSessionId: ProviderSessionId, providerThreadId: ProviderThreadId) {
+        function* (providerSessionId: ProviderSessionId, providerThreadId: ProviderThreadId, resetTransport = false) {
           const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
           if (entry === undefined || hasBusyTurn(entry, providerThreadId)) return;
           const tracked = Array.from(entry.idleThreadUnloads).find(
@@ -1500,6 +1501,30 @@ export const layerWithOptions = (
           if (tracked === undefined) return;
           const [threadId, pending] = tracked;
           const generation = pending.generation + 1;
+          if (resetTransport) {
+            const previous = yield* updateIdleThreadUnload(
+              providerSessionId,
+              threadId,
+              (current) =>
+                current?.generation === pending.generation
+                  ? { ...current, generation, fiber: null }
+                  : current,
+            );
+            yield* cancelIdleFiber(
+              previous?.generation === pending.generation ? previous.fiber : null,
+            );
+            // Codex's HTTP fallback is latched for the native thread's lifetime.
+            // Reload its saved history on retry instead of reusing that connection.
+            yield* unloadIdleThread({
+              providerSessionId,
+              threadId,
+              generation,
+              retryDeferred: false,
+            });
+            // Background work can keep the thread loaded; retain the usual idle cleanup.
+            yield* scheduleThreadUnload(providerSessionId, providerThreadId);
+            return;
+          }
           const fiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
             Effect.andThen(unloadIdleThread({ providerSessionId, threadId, generation })),
             Effect.forkIn(layerScope),
@@ -1520,6 +1545,7 @@ export const layerWithOptions = (
           readonly providerSessionId: ProviderSessionId;
           readonly threadId: ThreadId;
           readonly generation: number;
+          readonly retryDeferred?: boolean;
         }): Effect.fn.Return<void> {
           const outcome = yield* threadAttachment.withLock(
             threadAttachmentKey(input),
@@ -1584,7 +1610,7 @@ export const layerWithOptions = (
             }),
           );
           // Wait outside the lock so the next attach is not blocked.
-          if (outcome === "deferred") {
+          if (outcome === "deferred" && input.retryDeferred !== false) {
             yield* Effect.sleep(Duration.millis(idleTimeoutMs));
             return yield* unloadIdleThread(input);
           }
@@ -1887,6 +1913,10 @@ export const layerWithOptions = (
                     entry.runtime.providerSessionId,
                     event.providerThreadId,
                     event.runOrdinal,
+                    event.driver === "codex" &&
+                      event.status === "failed" &&
+                      (event.failure.class === "transport_error" ||
+                        (event.failure.code === "serverOverloaded" && event.retry !== undefined)),
                   )
                 : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
             ).pipe(
