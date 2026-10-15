@@ -65,16 +65,20 @@ import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
-import Migration0063 from "./Migrations/063_DropUnusedV1Projections.ts";
-import Migration0064 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
-import Migration0065 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
-import Migration0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
-import Migration0067 from "./Migrations/067_WebhookDedupe.ts";
-import Migration0068 from "./Migrations/068_ShellStopRequestIndex.ts";
-import Migration0069 from "./Migrations/069_ThreadMessageSearch.ts";
-import Migration0070 from "./Migrations/070_PeerLinks.ts";
-import Migration0071 from "./Migrations/071_PeerLinkFence.ts";
-import Migration0072 from "./Migrations/072_WaitingLinkRequestIndex.ts";
+import Migration0066 from "./Migrations/063_DropUnusedV1Projections.ts";
+import Migration0067 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
+import MigrationCustomFolders from "./Migrations/063_ProjectionProjectAdditionalDirectories.ts";
+import MigrationCustomRepair from "./Migrations/064_RepairProjectionThreadsAutoSettleDisabledAt.ts";
+import MigrationCustomUsage from "./Migrations/065_PromptSuggestionUsage.ts";
+
+import Migration0068 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
+import Migration0069 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
+import Migration0070 from "./Migrations/067_WebhookDedupe.ts";
+import Migration0071 from "./Migrations/068_ShellStopRequestIndex.ts";
+import Migration0072 from "./Migrations/069_ThreadMessageSearch.ts";
+import Migration0073 from "./Migrations/070_PeerLinks.ts";
+import Migration0074 from "./Migrations/071_PeerLinkFence.ts";
+import Migration0075 from "./Migrations/072_WaitingLinkRequestIndex.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -140,16 +144,19 @@ const migrationEntries = [
   [60, "ThreadSnapshotWindowIndexes", Migration0060],
   [61, "PullRequestReviewGuides", Migration0061],
   [62, "ThreadFailureLookupIndex", Migration0062],
-  [63, "DropUnusedV1Projections", Migration0063],
-  [64, "CanonicalizeThreadPullRequestLinks", Migration0064],
-  [65, "CodexUsageNativeTurnIndex", Migration0065],
-  [66, "RepairClientSettlementTimestamps", Migration0066],
-  [67, "WebhookDedupe", Migration0067],
-  [68, "ShellStopRequestIndex", Migration0068],
-  [69, "ThreadMessageSearch", Migration0069],
-  [70, "PeerLinks", Migration0070],
-  [71, "PeerLinkFence", Migration0071],
-  [72, "WaitingLinkRequestIndex", Migration0072],
+  [63, "ProjectionProjectAdditionalDirectories", MigrationCustomFolders],
+  [64, "RepairProjectionThreadsAutoSettleDisabledAt", MigrationCustomRepair],
+  [65, "PromptSuggestionUsage", MigrationCustomUsage],
+  [66, "DropUnusedV1Projections", Migration0066],
+  [67, "CanonicalizeThreadPullRequestLinks", Migration0067],
+  [68, "CodexUsageNativeTurnIndex", Migration0068],
+  [69, "RepairClientSettlementTimestamps", Migration0069],
+  [70, "WebhookDedupe", Migration0070],
+  [71, "ShellStopRequestIndex", Migration0071],
+  [72, "ThreadMessageSearch", Migration0072],
+  [73, "PeerLinks", Migration0073],
+  [74, "PeerLinkFence", Migration0074],
+  [75, "WaitingLinkRequestIndex", Migration0075],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -209,6 +216,22 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
 }: RunMigrationsOptions = {}) {
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
+  const sql = yield* SqlClient.SqlClient;
+  if (includesV2) {
+    const ledger =
+      yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+    if (ledger.length > 0) {
+      // These published custom migrations predate main's assignments. Their
+      // replacements are idempotent; remove only the known fork entries so
+      // main's skipped schema changes run before the relocated custom ones.
+      yield* sql.withTransaction(sql`
+        DELETE FROM effect_sql_migrations
+        WHERE (migration_id IN (54, 55, 61) AND name = 'ProjectionProjectAdditionalDirectories')
+           OR (migration_id IN (56, 62) AND name = 'RepairProjectionThreadsAutoSettleDisabledAt')
+           OR (migration_id = 63 AND name = 'PromptSuggestionUsage')
+      `);
+    }
+  }
   const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);

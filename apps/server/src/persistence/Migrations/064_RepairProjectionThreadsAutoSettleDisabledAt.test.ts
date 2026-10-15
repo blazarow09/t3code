@@ -4,11 +4,44 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
-import migrateProjectAdditionalDirectories from "./061_ProjectionProjectAdditionalDirectories.ts";
+import migrateSuggestionUsage from "./065_PromptSuggestionUsage.ts";
+import migrateProjectAdditionalDirectories from "./063_ProjectionProjectAdditionalDirectories.ts";
 
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
-  "062_RepairProjectionThreadsAutoSettleDisabledAt",
+  "064_RepairProjectionThreadsAutoSettleDisabledAt",
   (it) => {
+    it.effect("upgrades custom ids 61 through 63 without losing suggestion usage", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 60 });
+        yield* migrateProjectAdditionalDirectories;
+        yield* migrateSuggestionUsage;
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES
+          (61, 'ProjectionProjectAdditionalDirectories'),
+          (62, 'RepairProjectionThreadsAutoSettleDisabledAt'),
+          (63, 'PromptSuggestionUsage')`;
+        const meta = yield* sql`SELECT * FROM prompt_suggestion_usage_meta`;
+        yield* sql`INSERT INTO prompt_suggestion_usage
+          (cache_key, provider, instance_id, model, started_at, outcome)
+          VALUES ('retained', 'codex', 'codex', 'test-model', 1, 'generated')`;
+        yield* runMigrations();
+        assert.deepEqual(yield* sql`SELECT * FROM prompt_suggestion_usage_meta`, meta);
+        assert.deepEqual(yield* sql`SELECT cache_key FROM prompt_suggestion_usage`, [
+          { cache_key: "retained" },
+        ]);
+        assert.deepEqual(
+          yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 61 ORDER BY migration_id`,
+          [
+            { migration_id: 61, name: "PullRequestReviewGuides" },
+            { migration_id: 62, name: "ThreadFailureLookupIndex" },
+            { migration_id: 63, name: "ProjectionProjectAdditionalDirectories" },
+            { migration_id: 64, name: "RepairProjectionThreadsAutoSettleDisabledAt" },
+            { migration_id: 65, name: "PromptSuggestionUsage" },
+          ],
+        );
+        assert.deepEqual(yield* runMigrations(), []);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+    );
     it.effect("upgrades custom migrations 55 and 56 while preserving project folders", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
