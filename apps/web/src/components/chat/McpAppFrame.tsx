@@ -18,7 +18,7 @@ import {
   mcpAppFileName,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
-import { Minimize2Icon } from "lucide-react";
+import { Minimize2Icon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, type FocusEvent, type ToggleEvent } from "react";
 import { flushSync } from "react-dom";
 
@@ -28,6 +28,7 @@ import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
+import { WorkspacePageHeader } from "~/components/WorkspacePageHeader";
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
@@ -75,6 +76,13 @@ function saveBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+/**
+ * An MCP App inline in the thread: the captured document in an opaque-origin
+ * frame, speaking the MCP Apps bridge. Its tool calls and resource reads reach
+ * its own MCP server through the environment; callable tools run automatically,
+ * while chat messages and downloads ask first. Full screen keeps
+ * the same frame (and the app's state) and only restyles its box.
+ */
 export function McpAppFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -412,6 +420,8 @@ export function McpAppFrame(props: {
           variant="ghost"
           onClick={() => {
             setSrc(null);
+            setMintFailed(false);
+            setNavigatedAway(false);
             setDocumentGeneration((value) => value + 1);
             setClosed(false);
           }}
@@ -434,7 +444,7 @@ export function McpAppFrame(props: {
           : {})}
         data-mcp-app-fullscreen={fullscreen ? "" : undefined}
         className={cn(
-          "relative size-full overflow-hidden",
+          "relative size-full overflow-hidden [-webkit-app-region:no-drag]",
           app.prefersBorder === true && !fullscreen && "rounded-lg border border-border",
           fullscreen
             ? "fixed inset-0 m-0 flex h-dvh max-h-none w-dvw max-w-none flex-col border-0 bg-background p-0"

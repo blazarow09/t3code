@@ -321,16 +321,6 @@ export function ThreadMcpApp(props: {
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
-        if (
-          !info.value.readOnly &&
-          !(await confirm(
-            `Allow ${app.server} to run ${info.value.title ?? name}?`,
-            JSON.stringify(args, null, 2),
-            "Allow",
-          ))
-        ) {
-          throw new McpAppHostRefusal("Declined by the user.");
-        }
         const result = await latest.current.callTool({
           environmentId,
           input: { ...input, name, arguments: args },
