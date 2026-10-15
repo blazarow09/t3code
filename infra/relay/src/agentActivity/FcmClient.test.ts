@@ -53,7 +53,11 @@ const input = {
   alert: false,
 };
 
-function layerTest(requests: HttpClientRequest.HttpClientRequest[], responses: Response[]) {
+function layerTest(
+  requests: HttpClientRequest.HttpClientRequest[],
+  responses: Response[],
+  credentials: unknown = account,
+) {
   const http = HttpClient.make((request) => {
     requests.push(request);
     const response = responses.shift();
@@ -69,7 +73,10 @@ function layerTest(requests: HttpClientRequest.HttpClientRequest[], responses: R
     ),
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
+        Layer.succeed(RelayConfiguration.RelayConfiguration, {
+          ...config,
+          fcmServiceAccount: Redacted.make(encodeJson(credentials)),
+        }),
         Layer.succeed(HttpClient.HttpClient, http),
       ),
     ),
@@ -77,6 +84,38 @@ function layerTest(requests: HttpClientRequest.HttpClientRequest[], responses: R
 }
 
 describe("FCM delivery", () => {
+  it.effect("refreshes a local OAuth login without signing a service-account assertion", () => {
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    return Effect.gen(function* () {
+      const client = yield* FcmClient.FcmClient;
+      expect(yield* client.send(input)).toEqual({ unregistered: false });
+      const body = requests[0]!.body;
+      if (body._tag !== "Uint8Array") throw new Error("Expected OAuth form body");
+      const params = new URLSearchParams(new TextDecoder().decode(body.body));
+      expect(Object.fromEntries(params)).toEqual({
+        grant_type: "refresh_token",
+        client_id: "client",
+        client_secret: "secret",
+        refresh_token: "refresh",
+      });
+      expect(requests[1]!.headers.authorization).toBe("Bearer user-token");
+      expect(requests[1]!.url).toContain("/projects/local-project/messages:send");
+    }).pipe(
+      Effect.provide(
+        layerTest(
+          requests,
+          [Response.json({ access_token: "user-token" }), Response.json({ name: "sent" })],
+          {
+            type: "authorized_user",
+            project_id: "local-project",
+            client_id: "client",
+            client_secret: "secret",
+            refresh_token: "refresh",
+          },
+        ),
+      ),
+    );
+  });
   it.effect("signs a verifiable Google OAuth assertion scoped to messaging", () =>
     Effect.gen(function* () {
       const signer = yield* FcmAssertionSigner.FcmAssertionSigner;

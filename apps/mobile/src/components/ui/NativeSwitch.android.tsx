@@ -11,16 +11,23 @@ export function NativeSwitch(props: ThemedSwitchProps) {
 
   return (
     <Pressable
+      accessible
       disabled={props.disabled}
-      onPress={() => props.onValueChange?.(!props.value)}
       accessibilityLabel={props.accessibilityLabel}
       accessibilityHint={props.accessibilityHint}
       accessibilityRole="switch"
       accessibilityState={{ checked: Boolean(props.value), disabled: Boolean(props.disabled) }}
+      accessibilityActions={[{ name: "activate", label: "Toggle" }]}
+      onAccessibilityAction={toggle}
+      onPress={(event) => {
+        event.stopPropagation();
+        toggle();
+      }}
       style={props.style}
       testID={props.testID}
     >
-      <View importantForAccessibility="no-hide-descendants" pointerEvents="none">
+      {/* RN owns the tap so a surrounding row cannot claim the Compose host's touch. */}
+      <View pointerEvents="none" importantForAccessibility="no-hide-descendants">
         <NativeThemeHost ignoreSafeAreaKeyboardInsets style={{ width: 52, height: 48 }}>
           <ComposeSwitch
             value={Boolean(props.value)}

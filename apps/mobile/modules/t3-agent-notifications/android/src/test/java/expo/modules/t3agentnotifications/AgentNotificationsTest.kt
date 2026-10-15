@@ -6,6 +6,7 @@ import android.app.Application
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.ComponentName
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
@@ -23,6 +24,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.io.File
+import org.json.JSONObject
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [24, 26, 33, 36], manifest = Config.NONE)
@@ -30,6 +33,56 @@ class AgentNotificationsTest {
   private lateinit var context: Application
   private lateinit var manager: NotificationManager
   private lateinit var lifecycle: LifecycleRegistry
+
+  @Test
+  fun standaloneCustomClientReceivesPushWithoutAnAccountAndPreservesIdentity() {
+    val custom = object : ContextWrapper(context) {
+      override fun getPackageName() = "com.t3tools.t3code.custom"
+    }
+    AgentNotifications.clear(custom)
+    AgentNotifications.configureLocal(context, "t3code-custom")
+    assertFalse(context.getSharedPreferences("t3-agent-notifications", 0).getBoolean("enabled", false))
+    AgentNotifications.configureLocal(custom, "t3code-custom")
+    AgentNotifications.exportLocalPushConfiguration(custom, "local-token")
+    val file = File(custom.getExternalFilesDir(null), "local-push-device.json")
+    val first = JSONObject(file.readText())
+    assertEquals("local:" + first.getString("deviceId"), first.getString("userId"))
+    AgentNotifications.receive(custom, update("local-completion", false) + mapOf(
+      "device_id" to first.getString("deviceId"),
+      "user_id" to first.getString("userId")
+    ))
+    assertTrue(manager.activeNotifications.any { it.tag == "t3-agent-alert" })
+    AgentNotifications.configureLocal(custom, "t3code-custom")
+    AgentNotifications.exportLocalPushConfiguration(custom, "rotated-token")
+    val second = JSONObject(file.readText())
+    assertEquals(first.getString("deviceId"), second.getString("deviceId"))
+    assertEquals(first.getString("userId"), second.getString("userId"))
+    assertEquals("rotated-token", second.getString("token"))
+    assertTrue(manager.activeNotifications.any { it.tag == "t3-agent-alert" })
+    AgentNotifications.clear(custom)
+  }
+
+  @Test
+  fun customUsbSetupExportsCurrentIdentityAndClearsOnSignOut() {
+    val custom = object : ContextWrapper(context) {
+      override fun getPackageName() = "com.t3tools.t3code.custom"
+    }
+    val file = File(custom.getExternalFilesDir(null), "local-push-device.json")
+    file.delete()
+    AgentNotifications.exportLocalPushConfiguration(context, "ignored")
+    assertFalse(file.exists())
+    AgentNotifications.exportLocalPushConfiguration(custom, "token-one")
+    val data = JSONObject(file.readText())
+    assertEquals("device", data.getString("deviceId"))
+    assertEquals("user", data.getString("userId"))
+    assertEquals("token-one", data.getString("token"))
+    AgentNotifications.exportLocalPushConfiguration(custom, "token-two")
+    assertEquals("token-two", JSONObject(file.readText()).getString("token"))
+    AgentNotifications.clear(custom)
+    assertFalse(file.exists())
+    AgentNotifications.exportLocalPushConfiguration(custom, "stale")
+    assertFalse(file.exists())
+  }
 
   @Before
   fun setUp() {

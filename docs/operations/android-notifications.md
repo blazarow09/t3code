@@ -92,7 +92,13 @@ Create a private `connection.json` containing `wsUrl` (the environment's `/ws` U
 vp run push:android:watch /path/service-account.json /path/device.json /path/connection.json
 ```
 
+If service-account key creation is disabled, the local sender also accepts an OAuth credential JSON with `type: "authorized_user"`, `project_id`, `client_id`, `client_secret`, and `refresh_token`. Keep it outside the repository and APK, restrict access to the local account, and pass its path in place of the service-account file. The signed-in account must have permission to send FCM messages to that project.
+
+The custom Android package exports its device configuration to its app-specific external files directory as `local-push-device.json`. Without cloud configuration, opening the app initializes a durable local identity; no T3 Connect account is required. Cloud-configured clients initialize during sign-in. USB setup can pull that file for the local watcher. It is refreshed when the token changes and removed on cloud sign-out; refresh the watcher's device file and restart it after token rotation or an account change.
+
 The Android native handler must already be configured with that device and account, and notifications must be allowed. A native instrumentation harness can configure a disposable emulator before testing; a signed-in development app configures the handler during device registration. This watcher is a development transport: it observes all unarchived threads in its paired environment, enables all alert types, keeps no durable queue, and must stay running. It does not register Android devices with the existing hosted relay. The hosted relay needs the changes below before its notification settings and delivery work end to end.
+
+On Windows, the local watcher suppresses completion alerts while the desktop is unlocked and has received input within the last three minutes. Locking the desktop or exceeding the idle timeout allows new completion alerts. Suppressed completions are dropped rather than delivered later; approval, input-request and failure alerts remain enabled, and live activity updates continue silently. Set `T3CODE_ANDROID_PUSH_IDLE_TIMEOUT_MINUTES` to a positive number before starting the watcher to change the timeout. Run it in the signed-in Windows session so it can read that session's input activity. If activity detection fails, completion alerts remain enabled.
 
 ### Hosted delivery
 

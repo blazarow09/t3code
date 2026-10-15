@@ -15,10 +15,20 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
+import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.RemoteMessage
+import com.google.firebase.messaging.FirebaseMessaging
 import expo.modules.notifications.service.ExpoFirebaseMessagingService
+import java.io.File
+import java.util.UUID
+import org.json.JSONObject
 
 class AgentMessagingService : ExpoFirebaseMessagingService() {
+  override fun onNewToken(token: String) {
+    super.onNewToken(token)
+    AgentNotifications.exportLocalPushConfiguration(this, token)
+  }
+
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
     if (remoteMessage.data["t3_kind"] == "agent_activity") {
       AgentNotifications.receive(this, remoteMessage.data)
@@ -52,6 +62,16 @@ object AgentNotifications {
   private const val RUNNING_LIFETIME_MS = 2 * 60 * 60 * 1000L
   private const val MAX_LIFETIME_MS = 24 * 60 * 60 * 1000L
 
+  /** Initializes a standalone sender identity when the custom client has no cloud account. */
+  @Synchronized
+  fun configureLocal(context: Context, scheme: String) {
+    if (context.packageName != "com.t3tools.t3code.custom") return
+    val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+    val deviceId = prefs.getString("deviceId", null) ?: UUID.randomUUID().toString()
+    val userId = prefs.getString("userId", null) ?: "local:$deviceId"
+    configure(context, deviceId, userId, scheme, prefs.getBoolean("ongoing", true))
+  }
+
   @Synchronized
   fun configure(
     context: Context,
@@ -77,10 +97,31 @@ object AgentNotifications {
     if (ongoingEnabled && !wasEnabled) prefs.edit().putBoolean("dismissed", false).apply()
     if (!ongoingEnabled) cancelActivity(context)
     channels(context)
+    if (context.packageName == "com.t3tools.t3code.custom" && FirebaseApp.getApps(context).isNotEmpty()) {
+      FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+        exportLocalPushConfiguration(context, token)
+      }
+    }
+  }
+
+  /** Lets the custom build's USB setup connect the local sender without logging tokens. */
+  @Synchronized
+  fun exportLocalPushConfiguration(context: Context, token: String) {
+    if (context.packageName != "com.t3tools.t3code.custom") return
+    val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+    val deviceId = prefs.getString("deviceId", null) ?: return
+    val userId = prefs.getString("userId", null) ?: return
+    val directory = context.getExternalFilesDir(null) ?: return
+    val data = JSONObject().put("token", token).put("deviceId", deviceId)
+      .put("userId", userId).put("packageName", context.packageName)
+    runCatching { File(directory, "local-push-device.json").writeText(data.toString()) }
   }
 
   @Synchronized
   fun clear(context: Context) {
+    if (context.packageName == "com.t3tools.t3code.custom") {
+      context.getExternalFilesDir(null)?.let { File(it, "local-push-device.json").delete() }
+    }
     cancelActivity(context)
     context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().clear().apply()
     val manager = manager(context)

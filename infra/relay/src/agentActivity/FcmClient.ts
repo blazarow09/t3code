@@ -18,7 +18,16 @@ const ServiceAccount = Schema.Struct({
   client_email: Schema.NonEmptyString,
   private_key: Schema.NonEmptyString,
 });
-const decodeServiceAccount = Schema.decodeUnknownOption(Schema.fromJsonString(ServiceAccount));
+const AuthorizedUser = Schema.Struct({
+  type: Schema.Literal("authorized_user"),
+  project_id: Schema.NonEmptyString,
+  client_id: Schema.NonEmptyString,
+  client_secret: Schema.NonEmptyString,
+  refresh_token: Schema.NonEmptyString,
+});
+const decodeServiceAccount = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Union([ServiceAccount, AuthorizedUser])),
+);
 const decodeAccessToken = Schema.decodeUnknownEffect(
   Schema.Struct({ access_token: Schema.NonEmptyString }),
 );
@@ -71,25 +80,34 @@ const make = Effect.gen(function* () {
   const authorize = Effect.gen(function* () {
     if (Option.isNone(account))
       return yield* new FcmClientError({ operation: "configuration", status: null });
-    const now = yield* DateTime.now;
-    const assertion = yield* signer
-      .sign({
-        privateKey: account.value.private_key,
-        clientEmail: account.value.client_email,
-        issuedAt: Math.floor(now.epochMilliseconds / 1000),
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) => new FcmClientError({ operation: "authorize", status: null, cause }),
-        ),
-      );
+    // Local senders can use an OAuth login when service-account keys are disabled.
+    const parameters = yield* Effect.gen(function* () {
+      if ("refresh_token" in account.value) {
+        return {
+          grant_type: "refresh_token",
+          client_id: account.value.client_id,
+          client_secret: account.value.client_secret,
+          refresh_token: account.value.refresh_token,
+        };
+      }
+      const now = yield* DateTime.now;
+      const assertion = yield* signer
+        .sign({
+          privateKey: account.value.private_key,
+          clientEmail: account.value.client_email,
+          issuedAt: Math.floor(now.epochMilliseconds / 1000),
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) => new FcmClientError({ operation: "authorize", status: null, cause }),
+          ),
+        );
+      return { grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion };
+    });
     const response = yield* client
       .execute(
         HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
-          HttpClientRequest.bodyUrlParams({
-            grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            assertion,
-          }),
+          HttpClientRequest.bodyUrlParams(parameters),
         ),
       )
       .pipe(

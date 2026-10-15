@@ -11,6 +11,10 @@ class T3AgentNotificationsModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("T3AgentNotifications")
 
+    Function("configureLocal") { scheme: String ->
+      appContext.reactContext?.let { AgentNotifications.configureLocal(it, scheme) }
+    }
+
     Function("configure") {
         deviceId: String,
         userId: String,

@@ -1,8 +1,10 @@
 import Constants from "expo-constants";
 import { requireOptionalNativeModule } from "expo";
 import { Linking, Platform } from "react-native";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
 
 interface AndroidAgentNotifications {
+  configureLocal?(scheme: string): void;
   configure(deviceId: string, userId: string, scheme: string, ongoingEnabled: boolean): void;
   clear(): void;
   setThreadOnScreen?(path: string | null): void;
@@ -24,6 +26,11 @@ function appScheme(): string {
   return (Array.isArray(scheme) ? scheme[0] : scheme) ?? "t3code";
 }
 
+const usesLocalSender =
+  Constants.expoConfig?.android?.package === "com.t3tools.t3code.custom" && !hasCloudPublicConfig();
+
+if (usesLocalSender) native?.configureLocal?.(appScheme());
+
 export function configureAndroidAgentNotifications(
   deviceId: string,
   userId: string,
@@ -39,6 +46,8 @@ export function showAndroidShowcaseAgentActivity(data: Record<string, string>): 
 }
 
 export function clearAndroidAgentNotifications(): void {
+  // Cloud session cleanup also runs in clients that have never had an account.
+  if (usesLocalSender) return;
   native?.clear?.();
 }
 

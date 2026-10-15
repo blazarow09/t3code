@@ -4,6 +4,8 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import {
   ORCHESTRATION_V2_WS_METHODS,
+  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+  ORCHESTRATION_PROTOCOL_VERSION,
   WS_METHODS,
   WsRpcGroup,
   type OrchestrationProjectShell,
@@ -25,12 +27,12 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import * as RelayConfiguration from "../src/Config.ts";
-import { androidActivityData, fitFcmData } from "../src/agentActivity/fcmPayloads.ts";
+import { fitFcmData } from "../src/agentActivity/fcmPayloads.ts";
 import * as WebCrypto from "../src/WebCrypto.ts";
 import * as FcmAssertionSigner from "../src/agentActivity/FcmAssertionSigner.ts";
 import * as FcmClient from "../src/agentActivity/FcmClient.ts";
-import * as FcmDeliveries from "../src/agentActivity/FcmDeliveries.ts";
-import { makeAggregateState } from "../src/agentActivity/agentActivityAggregate.ts";
+import { idleTimeoutMs, readDesktopActivity } from "./android-push-desktop-activity.ts";
+import { makeWatchDelivery } from "./android-push-watch-delivery.ts";
 
 const Device = Schema.Struct({
   token: Schema.NonEmptyString,
@@ -43,7 +45,6 @@ const Connection = Schema.Struct({
   bearerToken: Schema.NonEmptyString,
 });
 const readFile = (path: string) => Effect.tryPromise(() => NodeFSP.readFile(path, "utf8"));
-const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 class WatchUnregisteredDeviceError extends Schema.TaggedError<WatchUnregisteredDeviceError>()(
   "WatchUnregisteredDeviceError",
   {},
@@ -63,15 +64,6 @@ class WatchStoppedError extends Schema.TaggedError<WatchStoppedError>()("WatchSt
 
 const isWatchUnregisteredDeviceError = Schema.is(WatchUnregisteredDeviceError);
 
-const preferences = {
-  notificationsEnabled: true,
-  liveActivitiesEnabled: true,
-  notifyOnApproval: true,
-  notifyOnInput: true,
-  notifyOnCompletion: true,
-  notifyOnFailure: true,
-};
-
 const main = Effect.gen(function* () {
   const [credentialsPath, devicePath, connectionPath] = process.argv.slice(2);
   if (!credentialsPath || !devicePath || !connectionPath) {
@@ -79,12 +71,20 @@ const main = Effect.gen(function* () {
       "Usage: node scripts/android-push-watch.ts <service-account.json> <device.json> <connection.json>",
     );
   }
+  const desktopIdleTimeoutMs = yield* Effect.sync(() =>
+    idleTimeoutMs(process.env.T3CODE_ANDROID_PUSH_IDLE_TIMEOUT_MINUTES),
+  );
   const credentials = yield* readFile(credentialsPath);
   const device = yield* readFile(devicePath).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Device))),
   );
   const connection = yield* readFile(connectionPath).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Connection))),
+  );
+  const wsUrl = new URL(connection.wsUrl);
+  wsUrl.searchParams.set(
+    ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+    String(ORCHESTRATION_PROTOCOL_VERSION),
   );
   const layerSocketConstructor = Layer.succeed(
     Socket.WebSocketConstructor,
@@ -94,9 +94,7 @@ const main = Effect.gen(function* () {
       }) as unknown as globalThis.WebSocket,
   );
   const layerProtocol = RpcClient.layerProtocolSocket().pipe(
-    Layer.provide(
-      Socket.layerWebSocket(connection.wsUrl).pipe(Layer.provide(layerSocketConstructor)),
-    ),
+    Layer.provide(Socket.layerWebSocket(wsUrl.href).pipe(Layer.provide(layerSocketConstructor))),
     Layer.provide(RpcSerialization.layerJson),
   );
   const layerFcm = FcmClient.layer.pipe(
@@ -130,9 +128,28 @@ const main = Effect.gen(function* () {
     const config = yield* rpc[WS_METHODS.serverGetConfig]({});
     const projects = new Map<string, OrchestrationProjectShell>();
     const threads = new Map<string, OrchestrationV2ThreadShell>();
-    let states = new Map<string, RelayAgentActivityState>();
-    let previouslyActive = false;
+    const deliver = makeWatchDelivery({
+      idleTimeoutMs: desktopIdleTimeoutMs,
+      readDesktopActivity,
+      send: Effect.fnUntraced(function* (data, alert) {
+        const result = yield* sender.send({
+          token: device.token,
+          packageName: device.packageName,
+          alert,
+          data: fitFcmData({
+            t3_kind: "agent_activity",
+            device_id: device.deviceId,
+            user_id: device.userId,
+            ...data,
+          }),
+        });
+        if (result.unregistered) return yield* new WatchUnregisteredDeviceError({});
+      }),
+    });
     yield* Effect.logInfo("Watching this paired environment for Android push verification.");
+    yield* Effect.logInfo(
+      `Completion alerts muted while desktop input is newer than ${desktopIdleTimeoutMs / 60_000} minutes; approvals, input requests and failures always alert.`,
+    );
     yield* rpc[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({}).pipe(
       Stream.runForEach(
         Effect.fnUntraced(function* (item) {
@@ -170,39 +187,13 @@ const main = Effect.gen(function* () {
             if (state) next.set(thread.id, state);
           }
           const state = item.kind === "thread.updated" ? next.get(item.thread.id) : undefined;
-          const previous = state ? states.get(state.threadId) : undefined;
           const now = yield* Clock.currentTimeMillis;
-          const alert =
-            state && state.phase !== previous?.phase && item.kind !== "snapshot"
-              ? FcmDeliveries.androidAlertForState(state, preferences, now)
-              : null;
-          const aggregate = makeAggregateState({
-            activeStates: [...next.values()],
-            terminalState: null,
+          yield* deliver({
+            states: next,
+            changedState: state,
             nowMs: now,
+            replay: item.kind === "snapshot",
           });
-          const active = (aggregate?.activeCount ?? 0) > 0;
-          const same = encodeJson([...next.values()]) === encodeJson([...states.values()]);
-          states = next;
-          if ((!active && !previouslyActive && !alert) || (same && !alert)) return;
-          const result = yield* sender.send({
-            token: device.token,
-            packageName: device.packageName,
-            alert: alert !== null,
-            data: fitFcmData({
-              t3_kind: "agent_activity",
-              device_id: device.deviceId,
-              user_id: device.userId,
-              updated_at: String(now),
-              ...androidActivityData(aggregate),
-              ...alert,
-            }),
-          });
-          if (result.unregistered) return yield* new WatchUnregisteredDeviceError({});
-          previouslyActive = active;
-          yield* Effect.logInfo(
-            `Android push accepted: ${state?.phase ?? (active ? "active" : "ended")}`,
-          );
         }),
       ),
     );
