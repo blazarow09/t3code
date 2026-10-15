@@ -5,7 +5,7 @@ import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type { ProviderTextGeneration, TextGenerationUsage } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -29,6 +29,8 @@ export interface Request<S extends Schema.Top> {
   readonly prompt: string;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
+  readonly onUsage?: ((usage: TextGenerationUsage) => void) | undefined;
+  /** The user's attachments, already listed in the prompt. Providers that accept images send them. */
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** Investigate cwd with read-only tools across turns; fail if the runner cannot guarantee read-only access. */
   readonly investigate?: { readonly timeoutMs: number } | undefined;
@@ -79,6 +81,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       operation: "generatePromptSuggestion",
       cwd: input.cwd,
       modelSelection: input.modelSelection,
+      onUsage: input.onUsage,
       ...buildPromptSuggestionPrompt(input),
     });
     return { suggestion: sanitizePromptSuggestion(generated.suggestion) };

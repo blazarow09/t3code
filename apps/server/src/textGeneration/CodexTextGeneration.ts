@@ -13,6 +13,7 @@ import {
   type ServerProviderModel,
   TextGenerationError,
 } from "@t3tools/contracts";
+import type { TextGenerationUsage } from "@t3tools/provider-core/server/textGeneration";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -52,6 +53,77 @@ const codexMcpServersOff = (names: ReadonlyArray<string>): string | null =>
     ? null
     : `mcp_servers={${names.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`;
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const record = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+
+const tokenCount = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+
+const finiteNonNegative = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+
+const codexSpeed = (value: unknown): TextGenerationUsage["speed"] => {
+  if (value === "ultrafast") return "ultrafast";
+  if (value === "fast" || value === "priority") return "fast";
+  if (value === "standard") return "standard";
+  return undefined;
+};
+
+/** Reads the final cumulative usage event from `codex exec --json` output. */
+export function extractCodexSuggestionUsage(output: string): TextGenerationUsage | undefined {
+  let result: TextGenerationUsage | undefined;
+  for (const line of output.split(/\r?\n/u)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const event = record(parsed);
+    if (event?.["type"] !== "turn.completed") continue;
+    const usage = record(event["usage"]);
+    if (!usage) continue;
+
+    const inputTokens = tokenCount(usage["input_tokens"]);
+    const outputTokens = tokenCount(usage["output_tokens"]);
+    if (inputTokens === undefined || outputTokens === undefined) continue;
+    const cachedInputTokens = tokenCount(usage["cached_input_tokens"]) ?? 0;
+    const cacheCreationTokens = tokenCount(usage["cache_creation_input_tokens"]) ?? 0;
+    const reasoningTokens =
+      tokenCount(usage["reasoning_output_tokens"]) ?? tokenCount(usage["reasoning_tokens"]) ?? 0;
+    const model =
+      typeof event["model"] === "string"
+        ? event["model"]
+        : typeof usage["model"] === "string"
+          ? usage["model"]
+          : undefined;
+    const costUsd =
+      finiteNonNegative(event["cost_usd"]) ??
+      finiteNonNegative(usage["cost_usd"]) ??
+      finiteNonNegative(event["total_cost_usd"]);
+    const speed =
+      codexSpeed(event["service_tier"] ?? usage["service_tier"] ?? usage["speed"]) ?? "standard";
+
+    result = {
+      totals: {
+        uncachedInputTokens: Math.max(0, inputTokens - cachedInputTokens - cacheCreationTokens),
+        cachedInputTokens,
+        cacheCreationTokens,
+        outputTokens,
+        reasoningTokens: Math.min(outputTokens, reasoningTokens),
+      },
+      ...(model ? { model } : {}),
+      ...(costUsd === undefined ? {} : { costUsd }),
+      ...(speed === undefined ? {} : { speed }),
+    };
+  }
+  return result;
+}
+/**
+ * Build a Codex text-generation closure bound to a specific `CodexSettings`
+ * payload. See `makeCodexAdapter` for the overall per-instance rationale.
+ */
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
   codexConfig: CodexSettings,
   environment?: NodeJS.ProcessEnv,
@@ -222,6 +294,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     modelSelection,
     attachments,
     investigate,
+    onUsage,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
@@ -248,6 +321,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     const instructionsConfig = instructionsPath
       ? yield* encodeJsonForOperation(operation, instructionsPath)
       : undefined;
+    let codexStdout = "";
+    let reportedUsage = false;
+    const reportUsage = Effect.sync(() => {
+      if (reportedUsage || !onUsage) return;
+      const usage = extractCodexSuggestionUsage(codexStdout);
+      if (!usage) return;
+      reportedUsage = true;
+      onUsage(usage);
+    });
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
       const resolved = resolveRuntime
@@ -285,7 +367,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
-      const serviceTier = resolved ? undefined : getCodexServiceTierOptionValue(modelSelection);
+      const serviceTier = suggestion
+        ? "default"
+        : resolved
+          ? undefined
+          : getCodexServiceTierOptionValue(modelSelection);
       const binary = effectiveConfig.binaryPath || "codex";
       const env = {
         ...effectiveEnvironment,
@@ -314,6 +400,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
           ...(mcpServersOff ? ["--config", mcpServersOff] : []),
+          ...(suggestion ? ["--json"] : []),
           ...(suggestion
             ? [
                 "--ignore-rules",
@@ -386,9 +473,23 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ),
         );
 
+      const collectStdout = suggestion
+        ? child.stdout.pipe(
+            Stream.decodeText(),
+            Stream.runForEach((chunk) =>
+              Effect.sync(() => {
+                codexStdout += chunk;
+              }),
+            ),
+            Effect.map(() => codexStdout),
+            Effect.mapError((cause) =>
+              normalizeCliError("codex", operation, cause, "Failed to collect process output"),
+            ),
+          )
+        : readStreamAsString(operation, child.stdout);
       const [stdout, stderr, exitCode] = yield* Effect.all(
         [
-          readStreamAsString(operation, child.stdout),
+          collectStdout,
           readStreamAsString(operation, child.stderr),
           child.exitCode.pipe(
             Effect.mapError((cause) =>
@@ -426,6 +527,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
     return yield* Effect.gen(function* () {
       yield* runCodexCommand().pipe(
+        Effect.ensuring(reportUsage),
         Effect.scoped,
         // The read-only sandbox already holds an investigation to reading; it only needs longer.
         Effect.timeoutOption(investigate?.timeoutMs ?? (suggestion ? PROMPT_SUGGESTION_TIMEOUT_MS : CODEX_TIMEOUT_MS)),

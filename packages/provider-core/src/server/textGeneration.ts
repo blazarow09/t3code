@@ -4,6 +4,7 @@ import type {
   ModelSelection,
   PullRequestReviewGuide,
   TextGenerationError,
+  UsageTokenTotals,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
@@ -101,6 +102,14 @@ export interface PromptSuggestionGenerationInput {
   userMessage: string;
   assistantMessage: string;
   modelSelection: ModelSelection;
+  readonly onUsage?: ((usage: TextGenerationUsage) => void) | undefined;
+}
+
+export interface TextGenerationUsage {
+  readonly totals: UsageTokenTotals;
+  readonly model?: string;
+  readonly costUsd?: number;
+  readonly speed?: "standard" | "fast" | "ultrafast";
 }
 
 export interface PromptSuggestionGenerationResult {

@@ -1726,7 +1726,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cursorAdjacentToMention: boolean,
     contextIds: string[],
   ) => {
-    dismissPromptSuggestion();
     expandComposerForEditorChange();
     refreshWorkspaceSnapshotOnTyping();
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
@@ -3784,10 +3783,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 !composerMenuOpen &&
                 !isComposerModelPickerOpen &&
                 !isStashMenuOpen ? (
-                  <button
-                    type="button"
+                  <div
                     className={cn(
-                      "absolute inset-y-0 right-0 left-0 flex items-start gap-2 overflow-hidden text-left leading-relaxed text-placeholder/60 hover:text-placeholder",
+                      "pointer-events-none absolute inset-y-0 right-0 left-0 flex items-start gap-2 overflow-hidden text-left leading-relaxed text-placeholder/60",
                       isComposerResting && "items-center whitespace-nowrap leading-8",
                       isComposerResting &&
                         (showUsageMeter
@@ -3796,17 +3794,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             ? "right-20"
                             : "right-12"),
                     )}
-                    aria-label={`Use suggestion: ${promptSuggestion}`}
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      if (promptRef.current.length > 0) return;
-                      dismissPromptSuggestion();
-                      applyPromptReplacement(0, 0, promptSuggestion, { expectedText: "" });
-                    }}
+                    aria-label={`Suggested message. Focus the input and press Tab to use: ${promptSuggestion}`}
                   >
                     <span className="line-clamp-2 min-w-0">{promptSuggestion}</span>
                     <span className="shrink-0 text-xs opacity-60">Tab</span>
-                  </button>
+                  </div>
                 ) : null}
                 {isComposerResting ? collapsedComposerImagePreviews : null}
                 {showMobilePendingAnswerActions ? (

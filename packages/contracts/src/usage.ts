@@ -120,6 +120,29 @@ export const UsageSummaryInput = Schema.Struct({
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
+export const PromptSuggestionUsageRow = Schema.Struct({
+  provider: UsageProviderKind,
+  instanceId: Schema.String,
+  model: TrimmedNonEmptyString,
+  requests: NonNegativeInt,
+  generated: NonNegativeInt,
+  failed: NonNegativeInt,
+  incomplete: NonNegativeInt,
+  usageReportedRequests: NonNegativeInt,
+  unpricedRequests: NonNegativeInt,
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+});
+export type PromptSuggestionUsageRow = typeof PromptSuggestionUsageRow.Type;
+
+export const PromptSuggestionUsage = Schema.Struct({
+  /** Stable ledger identity: two connections to one environment must count once. */
+  sourceId: TrimmedNonEmptyString,
+  trackingSince: Schema.String,
+  rows: Schema.Array(PromptSuggestionUsageRow),
+});
+export type PromptSuggestionUsage = typeof PromptSuggestionUsage.Type;
+
 export const UsageSummary = Schema.Struct({
   contractVersion: Schema.Number,
   readAt: Schema.String,
@@ -130,6 +153,8 @@ export const UsageSummary = Schema.Struct({
   sources: ForwardCompatibleArray(UsageSource),
   pricing: UsagePricing,
   scanDurationMs: NonNegativeInt,
+  /** Separate from transcript totals, which may already include helper requests. */
+  promptSuggestions: Schema.optional(PromptSuggestionUsage),
 });
 export type UsageSummary = typeof UsageSummary.Type;
 

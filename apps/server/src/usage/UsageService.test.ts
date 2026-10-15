@@ -155,6 +155,16 @@ const layerService = (input: {
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
     ),
+    Layer.provideMerge(
+      Layer.mock(PromptSuggestionUsage.PromptSuggestionUsage)({
+        readSummary: () =>
+          Effect.succeed({
+            sourceId: "test-ledger",
+            trackingSince: "2026-08-01T00:00:00Z",
+            rows: [],
+          }),
+      }),
+    ),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),

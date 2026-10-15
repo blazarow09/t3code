@@ -57,6 +57,7 @@ import {
   type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
+import * as PromptSuggestionUsage from "./PromptSuggestionUsage.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -156,6 +157,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcess.Environment;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
+  const promptSuggestionUsage = yield* PromptSuggestionUsage.PromptSuggestionUsage;
 
   const fileCache: ScanCache = new Map();
   // Reads from concurrent windows can still hold the original record after it is corrected.
@@ -685,16 +687,17 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
-    const aggregator = new UsageAggregator({
+    const aggregateOptions = {
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
-      resolution: input.resolution ?? "day",
+      resolution: input.resolution ?? ("day" as const),
       ...hourlyWindow,
       rates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
       modelAliases: resolveModelAliases(settings.usageModelAliases),
-    });
+    };
+    const aggregator = new UsageAggregator(aggregateOptions);
 
     const sources: UsageSource[] = [];
 
@@ -842,6 +845,16 @@ export const make = Effect.gen(function* () {
     if (pruned > 0) cacheDirty = true;
 
     const aggregated = aggregator.finish();
+    const promptSuggestions = yield* promptSuggestionUsage.readSummary(aggregateOptions).pipe(
+      Effect.mapError(
+        (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: "Could not read prompt suggestion usage.",
+            cause,
+          }),
+      ),
+    );
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
@@ -852,6 +865,7 @@ export const make = Effect.gen(function* () {
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
+      promptSuggestions,
       sources,
       pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
@@ -903,4 +917,6 @@ export const make = Effect.gen(function* () {
   return { readSummary, refreshRates, awaitPersisted } as const;
 });
 
-export const layer = Layer.effect(UsageService, make);
+export const layer = Layer.effect(UsageService, make).pipe(
+  Layer.provide(PromptSuggestionUsage.layer),
+);

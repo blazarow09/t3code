@@ -2,6 +2,7 @@ import {
   USAGE_CONTRACT_VERSION,
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
+  type PromptSuggestionUsageRow,
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
@@ -10,7 +11,16 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  formatPromptSuggestionAverageCost,
+  formatPromptSuggestionCost,
+  isModelCostUnknown,
+  mergePromptSuggestionUsage,
+  mergeUsage,
+  promptSuggestionTotalTokens,
+  sumPromptSuggestionUsage,
+  type EnvironmentUsage,
+} from "./usageMerge.ts";
 
 const decodeSummary = Schema.decodeUnknownSync(UsageSummary);
 
@@ -76,6 +86,121 @@ function summary(
 function environment(id: string, usageSummary: UsageSummary): EnvironmentUsage {
   return { environmentId: id as EnvironmentId, label: id, summary: usageSummary };
 }
+
+describe("prompt suggestion usage", () => {
+  const row: PromptSuggestionUsageRow = {
+    provider: "codex" as const,
+    instanceId: "account-1",
+    model: "gpt-5-mini",
+    requests: 3,
+    generated: 1,
+    failed: 1,
+    incomplete: 1,
+    usageReportedRequests: 2,
+    unpricedRequests: 1,
+    totals: {
+      uncachedInputTokens: 10,
+      cachedInputTokens: 20,
+      cacheCreationTokens: 5,
+      outputTokens: 8,
+      reasoningTokens: 3,
+    },
+    costUsd: 0.000123,
+  };
+  const tracked = (
+    id: string,
+    sourceId: string,
+    rows = [row],
+    readAt = "2026-08-07T00:00:00.000Z",
+  ) =>
+    environment(id, {
+      ...summary([], []),
+      readAt,
+      promptSuggestions: { sourceId, trackingSince: "2026-08-01T00:00:00.000Z", rows },
+    });
+
+  it("deduplicates a ledger using its newest answer regardless of connection order", () => {
+    const older = tracked("a", "ledger", [{ ...row, requests: 1 }]);
+    const newer = tracked("b", "ledger", [row], "2026-08-08T00:00:00.000Z");
+    expect(mergePromptSuggestionUsage([older, newer]).rows[0]?.requests).toBe(3);
+    expect(mergePromptSuggestionUsage([newer, older])).toEqual(
+      mergePromptSuggestionUsage([older, newer]),
+    );
+  });
+
+  it("sums independent ledgers by provider and model without inflating transcript totals", () => {
+    const merged = mergeUsage(
+      [tracked("a", "one"), tracked("b", "two", [{ ...row, instanceId: "account-2" }])],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(merged.promptSuggestions?.rows).toHaveLength(1);
+    expect(merged.promptSuggestions?.rows[0]?.requests).toBe(6);
+    expect(merged.costUsd).toBe(0);
+    expect(merged.totalTokens).toBe(0);
+    expect(promptSuggestionTotalTokens(row.totals)).toBe(43);
+  });
+
+  it("excludes hidden providers before aggregating", () => {
+    const merged = mergePromptSuggestionUsage(
+      [tracked("a", "ledger", [row, { ...row, provider: "claude" }])],
+      new Set(["codex"]),
+    );
+    expect(merged.rows.map((entry) => entry.provider)).toEqual(["claude"]);
+    expect(sumPromptSuggestionUsage(merged.rows).requests).toBe(3);
+  });
+
+  it("shows missing and unpriced accounting as unknown and mixed accounting as partial", () => {
+    expect(
+      formatPromptSuggestionCost({
+        ...row,
+        usageReportedRequests: 0,
+        unpricedRequests: 3,
+        costUsd: 0,
+      }),
+    ).toBe("Unknown");
+    expect(
+      formatPromptSuggestionCost({
+        ...row,
+        usageReportedRequests: 3,
+        unpricedRequests: 3,
+        costUsd: 0,
+      }),
+    ).toBe("Unknown");
+    expect(formatPromptSuggestionCost(row)).toBe("$0.000123 (partial)");
+    expect(
+      formatPromptSuggestionCost({ ...row, requests: 2, unpricedRequests: 0, costUsd: 0.00000001 }),
+    ).toBe("<$0.000001");
+    expect(formatPromptSuggestionCost({ ...row, costUsd: 0.00000001 })).toBe(
+      "<$0.000001 (partial)",
+    );
+  });
+
+  it("averages cost over priced requests and retains tiny and partial amounts", () => {
+    expect(formatPromptSuggestionAverageCost(row)).toBe("$0.000062 (partial)");
+    expect(formatPromptSuggestionAverageCost({ ...row, requests: 2, unpricedRequests: 0 })).toBe(
+      "$0.000062",
+    );
+    expect(formatPromptSuggestionAverageCost({ ...row, unpricedRequests: 3, costUsd: 0 })).toBe(
+      "Unknown",
+    );
+    expect(formatPromptSuggestionAverageCost(sumPromptSuggestionUsage([]))).toBe("Unknown");
+    expect(formatPromptSuggestionAverageCost({ ...row, costUsd: 0.0000001 })).toBe(
+      "<$0.000001 (partial)",
+    );
+  });
+
+  it("retains old-server absence instead of converting it to zero usage", () => {
+    const merged = mergePromptSuggestionUsage([
+      environment("old", summary([], [])),
+      tracked("new", "ledger", []),
+    ]);
+    expect(merged.unavailableEnvironments).toEqual(["old"]);
+    expect(merged.trackingSince).toBe("2026-08-01T00:00:00.000Z");
+    expect(
+      mergePromptSuggestionUsage([environment("old", summary([], []))]).trackingSince,
+    ).toBeNull();
+  });
+});
 
 describe("mergeUsage", () => {
   it("counts a Cursor account once across servers while retaining each server's other providers", () => {

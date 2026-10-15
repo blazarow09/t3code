@@ -14,8 +14,10 @@ import { type AcpError, AcpRequestError } from "effect-acp/errors";
 import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import type { TextGenerationUsage } from "@t3tools/provider-core/server/textGeneration";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { PROMPT_SUGGESTION_TIMEOUT_MS } from "@t3tools/provider-core/server/textGenerationPrompts";
+import type * as AcpSchema from "effect-acp/compat";
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const MAX_OUTPUT_CHARS = 128_000;
@@ -24,6 +26,20 @@ const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
 const Configuration = Schema.Record(Schema.String, Schema.Unknown);
 const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(Configuration));
 const decodeConfigurationObject = Schema.decodeUnknownEffect(Configuration);
+
+export function antigravityPromptUsage(usage: AcpSchema.Usage): TextGenerationUsage {
+  const cachedInputTokens = usage.cachedReadTokens ?? 0;
+  const cacheCreationTokens = usage.cachedWriteTokens ?? 0;
+  return {
+    totals: {
+      uncachedInputTokens: usage.inputTokens,
+      cachedInputTokens,
+      cacheCreationTokens,
+      outputTokens: usage.outputTokens,
+      reasoningTokens: Math.min(usage.outputTokens, usage.thoughtTokens ?? 0),
+    },
+  };
+}
 
 type AntigravityTextRuntime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -235,6 +251,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
                 },
               ],
             });
+            if (result.usage) input.onUsage?.(antigravityPromptUsage(result.usage));
             if (yield* Deferred.isDone(rejected)) {
               return yield* Deferred.await(rejected);
             }

@@ -33,6 +33,7 @@ const layerCodexTextGenerationTest = ServerConfig.ServerConfig.layerTest(process
 interface FakeCodexInput {
   output: string;
   lifecycle?: { port: number; command: "exec" | "mcp list" };
+  stdout?: string;
   exitCode?: number;
   stderr?: string;
   requireSuggestionIsolation?: boolean;
@@ -61,6 +62,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     mcpServers: input.mcpServers ?? [],
     stderr: input.stderr ?? null,
     output: input.output,
+    stdout: input.stdout ?? null,
     exitCode: input.exitCode ?? 0,
   });
   return Effect.gen(function* () {
@@ -145,6 +147,8 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  for (const arg of ["--ignore-rules", "--ephemeral"]) {',
         '    if (!args.includes(arg)) fail("missing isolation flag " + arg, 20);',
         "  }",
+        '  if (!args.includes("--json")) fail("missing JSON event stream", 25);',
+        '  if (!args.includes(\'service_tier="default"\')) fail("suggestion did not force standard service tier", 26);',
         '  if (args.includes("--ignore-user-config")) fail("provider endpoint config was discarded", 24);',
         '  for (const config of ["project_doc_max_bytes=0", "features.shell_tool=false", "features.unified_exec=false", "features.hooks=false", "features.plugins=false", "mcp_servers={}"]) {',
         '    if (!args.includes(config)) fail("missing isolation config " + config, 21);',
@@ -155,6 +159,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  if (!instructions.startsWith("Suggest a user")) fail("agent instructions leaked", 23);',
         "}",
         'if (check.stderr !== null) process.stderr.write(check.stderr + "\\n");',
+        "if (check.stdout !== null) process.stdout.write(check.stdout);",
         'if (outputPath !== null) NodeFS.writeFileSync(outputPath, check.output + "\\n");',
         "process.exitCode = check.exitCode;",
         "",
@@ -253,7 +258,121 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("accepts a null suggestion without a fallback or retry", () =>
+  it.effect("reports the final cumulative suggestion usage with cached input separated", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ suggestion: "Add coverage for cached prompts." }),
+        requireSuggestionIsolation: true,
+        stdout: [
+          JSON.stringify({
+            type: "turn.completed",
+            usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 8 },
+          }),
+          JSON.stringify({
+            type: "turn.completed",
+            model: "gpt-5.4-mini",
+            service_tier: "priority",
+            cost_usd: 0.012,
+            usage: {
+              input_tokens: 150,
+              cached_input_tokens: 40,
+              output_tokens: 12,
+              reasoning_output_tokens: 5,
+            },
+          }),
+        ].join("\n"),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const usages: Array<unknown> = [];
+          yield* textGeneration.generatePromptSuggestion({
+            cwd: process.cwd(),
+            userMessage: "Fix prompt caching",
+            assistantMessage: "Done.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            onUsage: (usage) => usages.push(usage),
+          });
+          expect(usages).toEqual([
+            {
+              totals: {
+                uncachedInputTokens: 110,
+                cachedInputTokens: 40,
+                cacheCreationTokens: 0,
+                outputTokens: 12,
+                reasoningTokens: 5,
+              },
+              model: "gpt-5.4-mini",
+              costUsd: 0.012,
+              speed: "fast",
+            },
+          ]);
+        }),
+    ),
+  );
+
+  it.effect("reports available suggestion usage when Codex exits with an error", () =>
+    withFakeCodexEnv(
+      {
+        output: "",
+        exitCode: 1,
+        stderr: "request failed",
+        requireSuggestionIsolation: true,
+        stdout: `${JSON.stringify({
+          type: "turn.completed",
+          usage: { input_tokens: 21, cached_input_tokens: 5, output_tokens: 3 },
+        })}\n`,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const usages: Array<unknown> = [];
+          yield* textGeneration
+            .generatePromptSuggestion({
+              cwd: process.cwd(),
+              userMessage: "Fix login",
+              assistantMessage: "Done.",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+              onUsage: (usage) => usages.push(usage),
+            })
+            .pipe(Effect.exit);
+          expect(usages).toEqual([
+            {
+              totals: {
+                uncachedInputTokens: 16,
+                cachedInputTokens: 5,
+                cacheCreationTokens: 0,
+                outputTokens: 3,
+                reasoningTokens: 0,
+              },
+              speed: "standard",
+            },
+          ]);
+        }),
+    ),
+  );
+
+  it.effect("does not report suggestion usage when Codex omits it", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ suggestion: "Run the regression test." }),
+        requireSuggestionIsolation: true,
+        stdout: `${JSON.stringify({ type: "turn.completed" })}\n`,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const usages: Array<unknown> = [];
+          yield* textGeneration.generatePromptSuggestion({
+            cwd: process.cwd(),
+            userMessage: "Fix login",
+            assistantMessage: "Done.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            onUsage: (usage) => usages.push(usage),
+          });
+          expect(usages).toEqual([]);
+        }),
+    ),
+  );
+
+  it.effect("rejects a null suggestion as invalid structured output", () =>
     withFakeCodexEnv(
       { output: JSON.stringify({ suggestion: null }), requireSuggestionIsolation: true },
       (textGeneration) =>
@@ -264,7 +383,10 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             assistantMessage: "Done.",
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           })
-          .pipe(Effect.map((result) => expect(result).toEqual({ suggestion: null }))),
+          .pipe(
+            Effect.result,
+            Effect.map((result) => expect(Result.isFailure(result)).toBe(true)),
+          ),
     ),
   );
   it.effect.each(["gpt-5.6-luna", "openai.gpt-5.6-luna"])(

@@ -3,14 +3,7 @@ import {
   createPromptSuggestionLifecycle,
   type PromptSuggestionContext,
 } from "@t3tools/client-runtime/prompt-suggestions";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useState,
-  useRef,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -30,31 +23,21 @@ export function usePromptSuggestion(input: PromptSuggestionContext) {
   const focused = useIsFocused();
   const context = visible && focused ? input : null;
   const [lifecycle] = useState(createPromptSuggestionLifecycle);
-  const [, render] = useState(0);
-  const mounted = useRef(false);
+  useSyncExternalStore(lifecycle.subscribe, lifecycle.getSnapshot, lifecycle.getSnapshot);
   const request = useAtomCommand(command, { reportFailure: false, reportDefect: false });
   useLayoutEffect(() => lifecycle.update(context), [context, lifecycle]);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
   useEffect(() => {
     if (!context) return;
     const ticket = lifecycle.begin();
     if (!ticket) return;
     void request({ environmentId: ticket.context.environmentId, input: ticket.context.input }).then(
       (result) => {
-        if (!mounted.current) return;
-        if (lifecycle.resolve(ticket, result._tag === "Success" ? result.value.suggestion : null)) {
-          render((version) => version + 1);
-        }
+        lifecycle.resolve(ticket, result._tag === "Success" ? result.value.suggestion : null);
       },
     );
   }, [context, lifecycle, request]);
   const dismiss = useCallback(() => {
-    if (lifecycle.dismiss()) render((version) => version + 1);
+    lifecycle.dismiss();
   }, [lifecycle]);
   return { suggestion: lifecycle.read(context), dismiss };
 }

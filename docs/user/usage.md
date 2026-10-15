@@ -54,6 +54,14 @@ saved totals first, then updates them when Cursor's API responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+**Prompt suggestions** shows the helper requests used to generate your next prompt,
+including generated, failed, and incomplete requests. Tracking starts when the server
+updates; earlier requests are unavailable. It follows your environment and period selection,
+and the provider filter on web and desktop. Missing token reports or model prices mean unknown usage,
+not free requests. Costs are API-equivalent estimates, not subscription charges. This
+section stays separate from transcript totals because some providers already include
+helper requests in their history.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,

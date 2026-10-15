@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -22,7 +23,7 @@ import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Schema from "effect/Schema";
 
-import { makePromptSuggestions } from "./promptSuggestions.ts";
+import * as PromptSuggestions from "./promptSuggestions.ts";
 import { layerMemory as SqlitePersistenceMemory } from "./persistence/Sqlite.ts";
 import { ThreadManagementService } from "./orchestration-v2/ThreadManagementService.ts";
 import { ProjectStoreV2 } from "./orchestration-v2/ProjectStore.ts";
@@ -58,7 +59,7 @@ const makeHarness = Effect.gen(function* () {
     worktreePath: null,
     latestRunId: runId,
     latestRunCompletedAt: yield* DateTime.now,
-    status: "idle",
+    status: "completed",
     archivedAt: null,
     activeRunId: null,
     pendingRuntimeRequest: null,
@@ -97,6 +98,7 @@ const makeHarness = Effect.gen(function* () {
   const requested = yield* Deferred.make<void>();
   const finish = yield* Deferred.make<void>();
   let failure = false;
+  let interrupted = false;
   let blocked = false;
   const instance = {
     instanceId,
@@ -107,7 +109,17 @@ const makeHarness = Effect.gen(function* () {
       generatePromptSuggestion: (value: PromptSuggestionGenerationInput) =>
         Effect.gen(function* () {
           calls.push(value);
+          value.onUsage?.({
+            totals: {
+              uncachedInputTokens: 100,
+              cachedInputTokens: 50,
+              cacheCreationTokens: 0,
+              outputTokens: 10,
+              reasoningTokens: 2,
+            },
+          });
           yield* Deferred.succeed(requested, undefined);
+          if (interrupted) return yield* Effect.interrupt;
           if (blocked) yield* Deferred.await(finish);
           if (failure)
             return yield* Effect.fail(
@@ -123,8 +135,8 @@ const makeHarness = Effect.gen(function* () {
   const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
   yield* sql`INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json) VALUES ('user', ${threadId}, ${runId}, 'user', 0, ${timestamp}, ${timestamp}, ${yield* encode({ text: "u".repeat(5000) })}), ('assistant', ${threadId}, ${runId}, 'assistant', 0, ${timestamp}, ${timestamp}, ${yield* encode({ text: "a".repeat(9000) })})`;
   yield* sql`INSERT INTO orchestration_v2_projection_runs (thread_id,run_id,ordinal,provider,status,requested_at,completed_at,payload_json) VALUES (${threadId},${runId},1,'codex','completed',${timestamp},${timestamp},${yield* encode({ userMessageId: "user" })})`;
-  const get = yield* makePromptSuggestions.pipe(
-    Effect.provide(
+  const serviceLayer = PromptSuggestions.layer.pipe(
+    Layer.provide(
       Layer.mergeAll(
         Layer.mock(ServerSettingsService)({ getSettings: Effect.sync(() => settings) }),
         Layer.mock(ThreadManagementService)({ getThreadShell: () => Effect.sync(() => thread) }),
@@ -142,8 +154,13 @@ const makeHarness = Effect.gen(function* () {
       ),
     ),
   );
+  const serviceContext = yield* Layer.build(serviceLayer);
+  const { get } = Context.get(serviceContext, PromptSuggestions.PromptSuggestions);
   return {
     get,
+    restart: Layer.build(serviceLayer).pipe(
+      Effect.map((context) => Context.get(context, PromptSuggestions.PromptSuggestions).get),
+    ),
     calls,
     requested,
     finish,
@@ -153,6 +170,9 @@ const makeHarness = Effect.gen(function* () {
     },
     fail: () => {
       failure = true;
+    },
+    interrupt: () => {
+      interrupted = true;
     },
     settings: (patch: Partial<Settings>) => {
       settings = { ...settings, ...patch };
@@ -203,6 +223,64 @@ it.effect(
     ),
 );
 
+it.effect("generates for a completed V2 thread", () =>
+  testHarness((h) =>
+    Effect.gen(function* () {
+      h.thread({ status: "completed" });
+      assert.deepStrictEqual(yield* h.get(input), expected);
+      assert.strictEqual(h.calls.length, 1);
+    }),
+  ),
+);
+
+it.effect(
+  "reuses a persisted suggestion after the service restarts and records only one request",
+  () =>
+    testHarness((h) =>
+      Effect.gen(function* () {
+        assert.deepStrictEqual(yield* h.get(input), expected);
+        const restarted = yield* h.restart;
+        assert.deepStrictEqual(yield* restarted(input), expected);
+        assert.strictEqual(h.calls.length, 1);
+        const records = yield* h.sql<{
+          outcome: string;
+          usage_json: string;
+        }>`SELECT outcome, usage_json FROM prompt_suggestion_usage`;
+        assert.strictEqual(records.length, 1);
+        assert.strictEqual(records[0]?.outcome, "generated");
+        assert.include(records[0]!.usage_json, '"uncachedInputTokens":100');
+      }),
+    ),
+);
+
+it.effect("does not retry a failed billed attempt after restarting", () =>
+  testHarness((h) =>
+    Effect.gen(function* () {
+      h.fail();
+      assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
+      const restarted = yield* h.restart;
+      assert.deepStrictEqual(yield* restarted(input), { suggestion: null });
+      assert.strictEqual(h.calls.length, 1);
+      const [record] = yield* h.sql<{
+        outcome: string;
+        usage_json: string;
+      }>`SELECT outcome, usage_json FROM prompt_suggestion_usage`;
+      assert.strictEqual(record?.outcome, "failed");
+      assert.include(record!.usage_json, '"outputTokens":10');
+    }),
+  ),
+);
+
+it.effect("does not spend a provider request when its usage cannot be recorded", () =>
+  testHarness((h) =>
+    Effect.gen(function* () {
+      yield* h.sql`DROP TABLE prompt_suggestion_usage`;
+      assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
+      assert.strictEqual(h.calls.length, 0);
+    }),
+  ),
+);
+
 it.effect("keeps failures cached without retries or an account fallback", () =>
   testHarness((h) =>
     Effect.gen(function* () {
@@ -214,26 +292,56 @@ it.effect("keeps failures cached without retries or an account fallback", () =>
   ),
 );
 
-it.effect("a disconnected caller does not cancel shared generation or cause another bill", () =>
+it.effect("closing one client's scope preserves shared generation for another client", () =>
   testHarness((h) =>
     Effect.gen(function* () {
       h.block();
-      const first = yield* h.get(input).pipe(Effect.forkChild);
-      yield* Deferred.await(h.requested);
-      yield* Fiber.interrupt(first);
+      yield* Effect.gen(function* () {
+        yield* h.get(input).pipe(Effect.forkScoped);
+        yield* Deferred.await(h.requested);
+      }).pipe(Effect.scoped);
       yield* Deferred.succeed(h.finish, undefined);
-      assert.deepStrictEqual(yield* h.get(input), expected);
+      assert.deepStrictEqual(yield* h.get(input).pipe(Effect.scoped), expected);
       assert.strictEqual(h.calls.length, 1);
     }),
   ),
 );
 
-it.effect("does not generate for old completed turns", () =>
+it.effect(
+  "releases waiting clients and caches an empty result when the worker is interrupted",
+  () =>
+    testHarness((h) =>
+      Effect.gen(function* () {
+        h.interrupt();
+        assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
+        assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
+        assert.strictEqual(h.calls.length, 1);
+      }),
+    ),
+);
+
+it.effect("finishes and caches an empty result when the provider never responds", () =>
+  testHarness((h) =>
+    Effect.gen(function* () {
+      h.block();
+      const request = yield* h.get(input).pipe(Effect.forkChild);
+      yield* Deferred.await(h.requested);
+      yield* TestClock.adjust("20 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(request), { suggestion: null });
+      assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
+      assert.strictEqual(h.calls.length, 1);
+    }),
+  ),
+);
+
+it.effect("generates for an older completed turn and retains it after the old expiry window", () =>
   testHarness((h) =>
     Effect.gen(function* () {
       yield* TestClock.adjust("6 minutes");
-      assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
-      assert.strictEqual(h.calls.length, 0);
+      assert.deepStrictEqual(yield* h.get(input), expected);
+      yield* TestClock.adjust("1 day");
+      assert.deepStrictEqual(yield* h.get(input), expected);
+      assert.strictEqual(h.calls.length, 1);
     }),
   ),
 );
@@ -277,6 +385,12 @@ it.effect(
         h.thread({ status: "running" });
         assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
         h.thread({ status: "idle" });
+        assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
+        h.thread({ status: "failed" });
+        assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
+        h.thread({ status: "interrupted" });
+        assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
+        h.thread({ status: "completed" });
         h.provider({ models: [] });
         assert.deepStrictEqual(yield* h.get(input), { suggestion: null });
         assert.deepStrictEqual(yield* h.get({ ...input, runId: RunId.make("old") }), {

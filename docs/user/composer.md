@@ -62,6 +62,10 @@ If your **Send shortcut** requires `Cmd+Enter` or `Ctrl+Enter`, that shortcut us
 your default follow-up behavior; add **Shift** to use the opposite action. This
 applies only to multiline messages when you choose the multiline send option.
 
+After queuing a message, press `Enter` again in the empty composer to send the
+oldest queued message as a steer. If you use the modifier-to-send setting, use
+your normal send shortcut instead. This requires a running agent that supports steering.
+
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
 the oldest queued message as a steer. This leaves the current draft intact and
 requires an active turn that supports steering. If that shortcut sends the opposite
@@ -118,9 +122,13 @@ provider under its environment's settings. Turning off the environment switch
 stops suggestions for every provider there.
 
 Suggestions use a short request on the thread's provider account and count toward
-its usage. They appear only when the composer is empty after a recent successful
-turn. Press Tab or click a suggestion on web and desktop, or tap **Use suggestion**
-on mobile, to put it in your draft without sending it. Typing dismisses it.
+its usage. After a successful turn, a suggestion waits in the empty composer until
+you accept it or send another message. Typing hides it; clearing your draft brings
+it back, including after leaving and returning to the chat.
+
+On web and desktop, focus the empty input and press **Tab** to put the suggestion
+in your draft without sending it. Clicking the input only focuses it. On mobile,
+tap **Use suggestion** to fill the draft.
 
 ## Model defaults
 

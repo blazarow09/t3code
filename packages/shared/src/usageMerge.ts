@@ -1,6 +1,7 @@
 import {
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
+  type PromptSuggestionUsageRow,
   type UsageBucket,
   type UsageProviderKind,
   type UsageSource,
@@ -87,6 +88,7 @@ export interface UsageContractMismatch {
 }
 
 export interface MergedUsage {
+  readonly promptSuggestions?: MergedPromptSuggestionUsage;
   readonly costUsd: number;
   readonly uncachedInputTokens: number;
   readonly cachedInputTokens: number;
@@ -108,6 +110,139 @@ export interface MergedUsage {
   readonly contractMismatches: readonly UsageContractMismatch[];
 }
 
+export interface MergedPromptSuggestionUsage {
+  readonly rows: readonly PromptSuggestionUsageRow[];
+  readonly trackingSince: string | null;
+  readonly unavailableEnvironments: readonly string[];
+}
+
+/** Counts each suggestion ledger once, preferring its newest snapshot. */
+export function mergePromptSuggestionUsage(
+  environments: readonly EnvironmentUsage[],
+  hiddenProviders: ReadonlySet<UsageProviderKind> = new Set(),
+): MergedPromptSuggestionUsage {
+  const owners = new Map<string, EnvironmentUsage>();
+  const unavailableEnvironments: string[] = [];
+  for (const environment of environments) {
+    const usage = environment.summary.promptSuggestions;
+    if (!usage) {
+      unavailableEnvironments.push(environment.label);
+      continue;
+    }
+    const owner = owners.get(usage.sourceId);
+    if (
+      !owner ||
+      environment.summary.readAt > owner.summary.readAt ||
+      (environment.summary.readAt === owner.summary.readAt &&
+        environment.environmentId < owner.environmentId)
+    ) {
+      owners.set(usage.sourceId, environment);
+    }
+  }
+  const rows = new Map<string, PromptSuggestionUsageRow>();
+  let trackingSince: string | null = null;
+  for (const environment of owners.values()) {
+    const usage = environment.summary.promptSuggestions;
+    if (!usage) continue;
+    // The latest start is the date from which every selected ledger has coverage.
+    if (trackingSince === null || usage.trackingSince > trackingSince)
+      trackingSince = usage.trackingSince;
+    for (const row of usage.rows) {
+      if (hiddenProviders.has(row.provider)) continue;
+      const key = JSON.stringify([row.provider, row.model]);
+      const previous = rows.get(key);
+      rows.set(
+        key,
+        previous
+          ? {
+              ...row,
+              instanceId: "",
+              ...sumPromptSuggestionUsage([previous, row]),
+            }
+          : { ...row, instanceId: "" },
+      );
+    }
+  }
+  return {
+    rows: [...rows.values()].sort(
+      (a, b) => b.costUsd - a.costUsd || b.requests - a.requests || a.model.localeCompare(b.model),
+    ),
+    trackingSince,
+    unavailableEnvironments,
+  };
+}
+
+export function sumPromptSuggestionUsage(rows: readonly PromptSuggestionUsageRow[]) {
+  const result = {
+    requests: 0,
+    generated: 0,
+    failed: 0,
+    incomplete: 0,
+    usageReportedRequests: 0,
+    unpricedRequests: 0,
+    costUsd: 0,
+    totals: {
+      uncachedInputTokens: 0,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    },
+  };
+  for (const row of rows) {
+    result.requests += row.requests;
+    result.generated += row.generated;
+    result.failed += row.failed;
+    result.incomplete += row.incomplete;
+    result.usageReportedRequests += row.usageReportedRequests;
+    result.unpricedRequests += row.unpricedRequests;
+    result.costUsd += row.costUsd;
+    for (const key of Object.keys(result.totals) as (keyof UsageTokenTotals)[])
+      result.totals[key] += row.totals[key];
+  }
+  return result;
+}
+
+/** Unknown usage stays unknown; tiny measured estimates retain useful precision. */
+export function formatPromptSuggestionCost(
+  row: ReturnType<typeof sumPromptSuggestionUsage>,
+): string {
+  const pricedRequests = row.requests - row.unpricedRequests;
+  if (row.requests > 0 && pricedRequests <= 0) return "Unknown";
+  const cost =
+    row.costUsd > 0 && row.costUsd < 0.000001
+      ? "<$0.000001"
+      : new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 6,
+        }).format(row.costUsd);
+  return pricedRequests < row.requests ? `${cost} (partial)` : cost;
+}
+
+export function promptSuggestionTotalTokens(totals: UsageTokenTotals): number {
+  return (
+    totals.uncachedInputTokens +
+    totals.cachedInputTokens +
+    totals.cacheCreationTokens +
+    totals.outputTokens
+  );
+}
+
+/** The denominator excludes requests whose cost is unknown. */
+export function formatPromptSuggestionAverageCost(
+  usage: ReturnType<typeof sumPromptSuggestionUsage>,
+): string {
+  const pricedRequests = usage.requests - usage.unpricedRequests;
+  if (pricedRequests <= 0) return "Unknown";
+  return formatPromptSuggestionCost({ ...usage, costUsd: usage.costUsd / pricedRequests });
+}
+
+/**
+ * `volumeId` is what stops two machines that happen to share a hostname and a home path, which is
+ * every Mac in a fleet, from collapsing into one source and having one of them silently dropped.
+ */
 // volumeId distinguishes machines sharing a hostname and home path.
 function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
   return [
@@ -544,6 +679,7 @@ export function mergeUsage(
   );
 
   return {
+    promptSuggestions: mergePromptSuggestionUsage(environments),
     costUsd,
     uncachedInputTokens,
     cachedInputTokens,

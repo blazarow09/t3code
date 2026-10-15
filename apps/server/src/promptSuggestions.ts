@@ -1,25 +1,24 @@
 import type { OrchestrationV2RpcSchemas, OrchestrationV2ThreadShell } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as DateTime from "effect/DateTime";
 import { supportsPromptSuggestionsDriver } from "@t3tools/shared/promptSuggestions";
+import type { TextGenerationUsage } from "@t3tools/provider-core/server/textGeneration";
 
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as SuggestionUsage from "./usage/PromptSuggestionUsage.ts";
 
 type Input = typeof OrchestrationV2RpcSchemas.getPromptSuggestion.input.Type;
 type Result = typeof OrchestrationV2RpcSchemas.getPromptSuggestion.output.Type;
 const empty: Result = { suggestion: null };
-// Old conversations never launch background work when reopened. Keeping results
-// longer than the eligibility window also bounds memory without regenerating them.
-const FRESH_TURN_MS = 5 * 60_000;
 const MAX_CACHED_TURNS = 512;
 
 const PromptContext = Schema.Array(
@@ -30,12 +29,11 @@ const PromptContext = Schema.Array(
 );
 const encodeCacheKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
 
-function isEligible(thread: OrchestrationV2ThreadShell, input: Input, now: number) {
+function isEligible(thread: OrchestrationV2ThreadShell, input: Input) {
   return (
     thread.latestRunId === input.runId &&
-    thread.status === "idle" &&
+    thread.status === "completed" &&
     thread.latestRunCompletedAt != null &&
-    now - DateTime.toEpochMillis(thread.latestRunCompletedAt) <= FRESH_TURN_MS &&
     thread.archivedAt === null &&
     thread.activeRunId === null &&
     thread.pendingRuntimeRequest === null &&
@@ -45,15 +43,20 @@ function isEligible(thread: OrchestrationV2ThreadShell, input: Input, now: numbe
   );
 }
 
-/** Construct once for the server, so all clients share in-flight and completed requests. */
-export const makePromptSuggestions = Effect.gen(function* () {
+export class PromptSuggestions extends Context.Service<
+  PromptSuggestions,
+  { readonly get: (input: Input) => Effect.Effect<Result> }
+>()("t3/promptSuggestions") {}
+
+const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const projection = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const sql = yield* SqlClient.SqlClient;
+  const usageStore = yield* SuggestionUsage.PromptSuggestionUsage;
   const scope = yield* Scope.Scope;
-  const cache = new Map<string, { createdAt: number; result: Deferred.Deferred<Result> }>();
+  const cache = new Map<string, { completed: boolean; result: Deferred.Deferred<Result> }>();
 
   const resolve = Effect.fn("PromptSuggestions.resolve")(function* (input: Input) {
     const settings = yield* settingsService.getSettings;
@@ -61,7 +64,7 @@ export const makePromptSuggestions = Effect.gen(function* () {
     const found = yield* projection.getThreadShell(input.threadId);
     if (!found) return null;
     const thread = found;
-    if (!isEligible(thread, input, yield* Clock.currentTimeMillis)) return null;
+    if (!isEligible(thread, input)) return null;
     const instanceId = thread.modelSelection.instanceId;
     const config = settings.providerInstances[instanceId];
     const selection = config?.promptSuggestions;
@@ -106,17 +109,22 @@ export const makePromptSuggestions = Effect.gen(function* () {
   const get = Effect.fn("PromptSuggestions.get")(function* (input: Input) {
     const context = yield* resolve(input);
     if (!context) return empty;
-    const now = yield* Clock.currentTimeMillis;
-    for (const [key, entry] of cache) {
-      if (now - entry.createdAt > FRESH_TURN_MS * 2) cache.delete(key);
-    }
     const pending = yield* Effect.gen(function* () {
       const existing = cache.get(context.key);
       if (existing) return existing.result;
-      if (cache.size >= MAX_CACHED_TURNS) return null;
+      if (cache.size >= MAX_CACHED_TURNS) {
+        const oldestCompleted = [...cache].find(([, entry]) => entry.completed);
+        if (!oldestCompleted) return null;
+        cache.delete(oldestCompleted[0]);
+      }
       const pending = Deferred.makeUnsafe<Result>();
-      cache.set(context.key, { createdAt: now, result: pending });
+      const entry = { completed: false, result: pending };
+      cache.set(context.key, entry);
       const result = pending;
+      let claimed = false;
+      let usage: TextGenerationUsage | undefined;
+      let suggestion: string | null = null;
+      let outcome: Parameters<typeof usageStore.finish>[0]["outcome"] = "interrupted";
       const generate = Effect.gen(function* () {
         // Only fetch two bounded text fields; never hydrate the conversation or tool logs.
         const rows = yield* sql`
@@ -134,16 +142,73 @@ export const makePromptSuggestions = Effect.gen(function* () {
         if (!messages?.userMessage.trim() || !messages.assistantMessage.trim()) return empty;
         const project = yield* projects.get(context.thread.projectId);
         if (Option.isNone(project)) return empty;
-        return yield* context.instance.textGeneration.generatePromptSuggestion({
+        const claim = yield* usageStore.claim({
+          key: context.key,
+          provider:
+            context.instance.driverKind === "claudeAgent"
+              ? "claude"
+              : context.instance.driverKind === "antigravity"
+                ? "antigravity"
+                : "codex",
+          instanceId: context.modelSelection.instanceId,
+          model: context.modelSelection.model,
+        });
+        if (!claim.claimed) return { suggestion: claim.suggestion };
+        claimed = true;
+        const generated = yield* context.instance.textGeneration.generatePromptSuggestion({
           ...messages,
           cwd: context.thread.worktreePath ?? project.value.workspaceRoot,
           modelSelection: context.modelSelection,
+          onUsage: (reported) => {
+            usage = reported;
+          },
         });
+        suggestion = generated.suggestion;
+        outcome = suggestion === null ? "empty" : "generated";
+        return generated;
       }).pipe(
         Effect.timeout("20 seconds"),
-        Effect.orElseSucceed(() => empty),
-        Effect.catchDefect(() => Effect.succeed(empty)),
+        Effect.catchTags({
+          TimeoutError: () =>
+            Effect.sync(() => {
+              outcome = "timedOut";
+              return empty;
+            }),
+        }),
+        Effect.catch(() =>
+          Effect.sync(() => {
+            outcome = "failed";
+            return empty;
+          }),
+        ),
+        Effect.catchDefect(() =>
+          Effect.sync(() => {
+            outcome = "failed";
+            return empty;
+          }),
+        ),
+        Effect.ensuring(
+          Effect.suspend(() =>
+            claimed
+              ? usageStore
+                  .finish({ key: context.key, outcome, suggestion, usage })
+                  .pipe(
+                    Effect.catch(() =>
+                      Effect.logWarning("Could not save prompt suggestion usage."),
+                    ),
+                  )
+              : Effect.void,
+          ),
+        ),
         Effect.flatMap((value) => Deferred.succeed(result, value)),
+        // Interruption is not an error or defect. Always release clients waiting
+        // on this cache entry, even if the provider interrupts its own worker.
+        Effect.ensuring(
+          Effect.gen(function* () {
+            entry.completed = true;
+            yield* Deferred.succeed(result, empty);
+          }),
+        ),
       );
       // A client disconnect must not restart a billed request from another client.
       yield* generate.pipe(Effect.interruptible, Effect.forkIn(scope));
@@ -155,5 +220,12 @@ export const makePromptSuggestions = Effect.gen(function* () {
     return current?.key === context.key && current.instance === context.instance ? result : empty;
   });
 
-  return (input: Input) => get(input).pipe(Effect.orElseSucceed(() => empty));
+  return PromptSuggestions.of({
+    get: (input) => get(input).pipe(Effect.orElseSucceed(() => empty)),
+  });
 });
+
+/** Own the worker and cache for the server lifetime, beyond any one client connection. */
+export const layer = Layer.effect(PromptSuggestions, make).pipe(
+  Layer.provide(SuggestionUsage.layer),
+);

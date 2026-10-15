@@ -37,9 +37,13 @@ describe("prompt suggestions", () => {
     expect(prompt).not.toContain("reply start");
   });
 
-  it("accepts nullable structured output", () => {
+  it("requires a nonempty suggestion from the model", () => {
     const { outputSchema } = buildPromptSuggestionPrompt({ userMessage: "", assistantMessage: "" });
-    expect(Schema.decodeSync(outputSchema)({ suggestion: null })).toEqual({ suggestion: null });
+    expect(() => Schema.decodeUnknownSync(outputSchema)({ suggestion: null })).toThrow();
+    expect(() => Schema.decodeSync(outputSchema)({ suggestion: "" })).toThrow();
+    expect(Schema.decodeSync(outputSchema)({ suggestion: "Verify the parser fix." })).toEqual({
+      suggestion: "Verify the parser fix.",
+    });
     expect(toJsonSchemaObject(outputSchema)).toMatchObject({
       required: ["suggestion"],
       additionalProperties: false,

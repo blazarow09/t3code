@@ -6,6 +6,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
+import type { TextGenerationUsage } from "@t3tools/provider-core/server/textGeneration";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
@@ -63,6 +64,7 @@ const ClaudeOutputMessage = Schema.Struct({
 const isClaudeOutputEnvelope = Schema.is(ClaudeOutputEnvelope);
 
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonUnknown = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeClaudeOutput = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Union([ClaudeOutputEnvelope, Schema.Array(ClaudeOutputMessage)])),
 );
@@ -79,6 +81,89 @@ function claudeErrorResult(stdout: string): string | undefined {
     .filter(isClaudeErrorResult)
     .map((message) => message.result.trim())
     .findLast((result) => result.length > 0);
+}
+
+const record = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+
+const tokenCount = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+
+const finiteNonNegative = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+
+const claudeSpeed = (value: unknown): TextGenerationUsage["speed"] => {
+  if (value === "ultrafast") return "ultrafast";
+  if (value === "fast") return "fast";
+  if (value === "standard") return "standard";
+  return undefined;
+};
+
+function claudeTotals(usage: Record<string, unknown>) {
+  const inputTokens = tokenCount(usage["input_tokens"] ?? usage["inputTokens"]);
+  const outputTokens = tokenCount(usage["output_tokens"] ?? usage["outputTokens"]);
+  if (inputTokens === undefined || outputTokens === undefined) return undefined;
+  const cachedInputTokens =
+    tokenCount(usage["cache_read_input_tokens"] ?? usage["cacheReadInputTokens"]) ?? 0;
+  const cacheCreationTokens =
+    tokenCount(usage["cache_creation_input_tokens"] ?? usage["cacheCreationInputTokens"]) ?? 0;
+  return {
+    uncachedInputTokens: inputTokens,
+    cachedInputTokens,
+    cacheCreationTokens,
+    outputTokens,
+    reasoningTokens: 0,
+  };
+}
+
+/** Extracts Claude's aggregate result usage without double-counting `modelUsage`. */
+export function extractClaudeSuggestionUsage(output: unknown): TextGenerationUsage | undefined {
+  const envelope = Array.isArray(output)
+    ? output.map(record).findLast((message) => message?.["type"] === "result")
+    : record(output);
+  if (!envelope) return undefined;
+
+  const modelUsage = record(envelope["modelUsage"]);
+  const perModel = modelUsage
+    ? Object.entries(modelUsage).flatMap(([model, value]) => {
+        const totals = record(value);
+        const parsed = totals ? claudeTotals(totals) : undefined;
+        return parsed ? [{ model, totals: parsed }] : [];
+      })
+    : [];
+  const aggregateUsage = record(envelope["usage"]);
+  const aggregateTotals = aggregateUsage ? claudeTotals(aggregateUsage) : undefined;
+  const totals =
+    aggregateTotals ??
+    (perModel.length > 0
+      ? perModel.reduce(
+          (sum, entry) => ({
+            uncachedInputTokens: sum.uncachedInputTokens + entry.totals.uncachedInputTokens,
+            cachedInputTokens: sum.cachedInputTokens + entry.totals.cachedInputTokens,
+            cacheCreationTokens: sum.cacheCreationTokens + entry.totals.cacheCreationTokens,
+            outputTokens: sum.outputTokens + entry.totals.outputTokens,
+            reasoningTokens: 0,
+          }),
+          {
+            uncachedInputTokens: 0,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+          },
+        )
+      : undefined);
+  if (!totals) return undefined;
+
+  const model = perModel.length === 1 ? perModel[0]?.model : undefined;
+  const costUsd = finiteNonNegative(envelope["total_cost_usd"]);
+  const speed = claudeSpeed(aggregateUsage?.["speed"] ?? envelope["speed"]);
+  return {
+    totals,
+    ...(model ? { model } : {}),
+    ...(costUsd === undefined ? {} : { costUsd }),
+    ...(speed === undefined ? {} : { speed }),
+  };
 }
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
@@ -131,11 +216,20 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchema: outputSchemaJson,
     modelSelection,
     investigate,
+    onUsage,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
     S["DecodingServices"]
   > {
+    let reportedUsage = false;
+    const reportUsage = (output: unknown) => {
+      if (reportedUsage || !onUsage) return;
+      const usage = extractClaudeSuggestionUsage(output);
+      if (!usage) return;
+      reportedUsage = true;
+      onUsage(usage);
+    };
     const catalog = yield* scopedModelCatalog;
     const resolvedModelSelection = {
       ...modelSelection,
@@ -262,6 +356,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         { concurrency: "unbounded" },
       );
 
+      yield* decodeJsonUnknown(stdout).pipe(
+        Effect.tap((output) => Effect.sync(() => reportUsage(output))),
+        Effect.ignore,
+      );
+
       if (exitCode !== 0) {
         const stderrDetail = stderr.trim();
         const stdoutDetail = stdout.trim();
@@ -309,6 +408,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const envelope = isClaudeOutputEnvelope(output)
       ? output
       : output.findLast((message) => message.type === "result");
+    reportUsage(output);
 
     const decodeOutput = Schema.decodeEffect(outputSchemaJson);
     return yield* decodeOutput(envelope?.structured_output).pipe(

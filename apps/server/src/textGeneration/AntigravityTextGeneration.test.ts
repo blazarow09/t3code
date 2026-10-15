@@ -283,15 +283,66 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       const fixture = yield* makeFixture({
         outputs: ['{"suggestion":"Test the remote Google login callback."}'],
       });
+      const usages: Array<unknown> = [];
       const result = yield* fixture.textGeneration.generatePromptSuggestion({
         cwd: fixture.projectDirectory,
         userMessage: "Fix remote login",
         assistantMessage: "Fixed. The remote callback still needs coverage.",
         modelSelection,
+        onUsage: (usage) => usages.push(usage),
       });
       expect(result).toEqual({ suggestion: "Test the remote Google login callback." });
       expect(fixture.state.workspaces).not.toContain(fixture.projectDirectory);
       expect(fixture.state.prompts).toHaveLength(1);
+      expect(usages).toEqual([]);
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports ACP prompt usage with cached input separated", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        prompt: ({ emit }) =>
+          Effect.gen(function* () {
+            yield* emit({
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                type: "text",
+                text: '{"suggestion":"Test the remote Google login callback."}',
+              },
+            });
+            return {
+              stopReason: "end_turn",
+              usage: {
+                totalTokens: 107,
+                inputTokens: 60,
+                outputTokens: 15,
+                thoughtTokens: 7,
+                cachedReadTokens: 20,
+                cachedWriteTokens: 5,
+              },
+            };
+          }),
+      });
+      const usages: Array<unknown> = [];
+      yield* fixture.textGeneration.generatePromptSuggestion({
+        cwd: fixture.projectDirectory,
+        userMessage: "Fix remote login",
+        assistantMessage: "Fixed. The remote callback still needs coverage.",
+        modelSelection,
+        onUsage: (usage) => usages.push(usage),
+      });
+      expect(usages).toEqual([
+        {
+          totals: {
+            uncachedInputTokens: 60,
+            cachedInputTokens: 20,
+            cacheCreationTokens: 5,
+            outputTokens: 15,
+            reasoningTokens: 7,
+          },
+        },
+      ]);
       yield* fixture.assertCleaned;
     }).pipe(Effect.scoped),
   );

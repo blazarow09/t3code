@@ -45,7 +45,6 @@ export function promptSuggestionContext(input: {
   const config = provider?.promptSuggestions;
   if (
     !input.available ||
-    !input.draftEmpty ||
     input.blocked ||
     !settings?.promptSuggestionsEnabled ||
     !provider ||
@@ -68,6 +67,7 @@ export function promptSuggestionContext(input: {
   const turnKey = JSON.stringify([input.environmentId, thread.id, run.runId]);
   return {
     environmentId: input.environmentId,
+    draftEmpty: input.draftEmpty,
     input: { threadId: thread.id, runId: run.runId },
     turnKey,
     key: JSON.stringify([turnKey, thread.modelSelection.instanceId, config]),
@@ -76,43 +76,78 @@ export function promptSuggestionContext(input: {
 
 export type PromptSuggestionContext = ReturnType<typeof promptSuggestionContext>;
 
-// Composer routes can remount. An attempted turn stays consumed for this client session.
-const attemptedTurns = new Set<string>();
+interface SuggestionEntry {
+  readonly turnKey: string;
+  readonly key: string;
+  suggestion: string | null;
+  accepted: boolean;
+}
 
-/** Owns one visible suggestion and invalidates responses when eligibility changes. */
-export function createPromptSuggestionLifecycle(consumedTurns = attemptedTurns) {
-  let context: PromptSuggestionContext = null;
-  let revision = 0;
-  let suggestion: string | null = null;
-  let pending = false;
+export function createPromptSuggestionCache() {
   return {
+    entries: new Map<string, SuggestionEntry>(),
+    listeners: new Set<() => void>(),
+    revision: 0,
+  };
+}
+
+// Retain the latest suggestion per chat across composer remounts and navigation.
+const suggestions = createPromptSuggestionCache();
+const chatKey = (context: NonNullable<PromptSuggestionContext>) =>
+  JSON.stringify([context.environmentId, context.input.threadId]);
+
+/** Draft edits and visibility changes hide a suggestion without consuming it. */
+export function createPromptSuggestionLifecycle(cache = suggestions) {
+  let context: PromptSuggestionContext = null;
+  const notify = () => {
+    cache.revision += 1;
+    for (const listener of cache.listeners) listener();
+  };
+  return {
+    subscribe(listener: () => void) {
+      cache.listeners.add(listener);
+      return () => {
+        cache.listeners.delete(listener);
+      };
+    },
+    getSnapshot: () => cache.revision,
     update(next: PromptSuggestionContext) {
-      if (next?.key === context?.key) return;
       context = next;
-      revision += 1;
-      suggestion = null;
-      pending = false;
     },
     begin() {
-      if (!context || consumedTurns.has(context.turnKey)) return null;
-      consumedTurns.add(context.turnKey);
-      pending = true;
-      return { revision, context };
+      if (!context?.draftEmpty) return null;
+      const id = chatKey(context);
+      if (cache.entries.get(id)?.turnKey === context.turnKey) return null;
+      const entry: SuggestionEntry = {
+        turnKey: context.turnKey,
+        key: context.key,
+        suggestion: null,
+        accepted: false,
+      };
+      cache.entries.set(id, entry);
+      return { id, entry, context };
     },
-    resolve(ticket: { readonly revision: number }, value: string | null) {
-      if (!context || ticket.revision !== revision) return false;
-      pending = false;
-      suggestion = value?.trim() || null;
+    resolve(
+      ticket: { readonly id: string; readonly entry: SuggestionEntry },
+      value: string | null,
+    ) {
+      if (cache.entries.get(ticket.id) !== ticket.entry || ticket.entry.accepted) return false;
+      ticket.entry.suggestion = value?.trim() || null;
+      notify();
       return true;
     },
     read(next: PromptSuggestionContext) {
-      return next !== null && next.key === context?.key ? suggestion : null;
+      if (!next?.draftEmpty) return null;
+      const entry = cache.entries.get(chatKey(next));
+      return entry?.key === next.key && !entry.accepted ? entry.suggestion : null;
     },
     dismiss() {
-      if (!pending && suggestion === null) return false;
-      revision += 1;
-      suggestion = null;
-      pending = false;
+      if (!context) return false;
+      const entry = cache.entries.get(chatKey(context));
+      if (!entry || entry.turnKey !== context.turnKey || entry.accepted) return false;
+      entry.accepted = true;
+      entry.suggestion = null;
+      notify();
       return true;
     },
   };

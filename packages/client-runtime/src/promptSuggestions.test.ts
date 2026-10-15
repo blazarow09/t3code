@@ -7,7 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createPromptSuggestionLifecycle, promptSuggestionContext } from "./promptSuggestions.ts";
+import {
+  createPromptSuggestionCache,
+  createPromptSuggestionLifecycle,
+  promptSuggestionContext,
+} from "./promptSuggestions.ts";
 
 function fixture() {
   return {
@@ -57,7 +61,7 @@ describe("prompt suggestion eligibility", () => {
     expect(promptSuggestionContext(input)).toBeNull();
   });
 
-  it.each([{ available: false }, { draftEmpty: false }, { blocked: true }])(
+  it.each([{ available: false }, { blocked: true }])(
     "suppresses requests for an unavailable or occupied composer: %j",
     (override) => {
       expect(promptSuggestionContext({ ...fixture(), ...override })).toBeNull();
@@ -103,8 +107,50 @@ describe("prompt suggestion eligibility", () => {
 });
 
 describe("prompt suggestion lifecycle", () => {
+  it("waits for an empty draft before spending a request, without consuming the turn", () => {
+    const lifecycle = createPromptSuggestionLifecycle(createPromptSuggestionCache());
+    lifecycle.update(promptSuggestionContext({ ...fixture(), draftEmpty: false }));
+    expect(lifecycle.begin()).toBeNull();
+    const empty = promptSuggestionContext(fixture());
+    lifecycle.update(empty);
+    const ticket = lifecycle.begin();
+    expect(ticket).not.toBeNull();
+    lifecycle.resolve(ticket!, "Verify the result");
+    expect(lifecycle.read(empty)).toBe("Verify the result");
+  });
+  it("restores a suggestion after navigation or a composer remount until accepted", () => {
+    const cache = createPromptSuggestionCache();
+    const context = promptSuggestionContext(fixture());
+    const first = createPromptSuggestionLifecycle(cache);
+    first.update(context);
+    first.resolve(first.begin()!, "Add focused tests");
+    first.update(null);
+    expect(first.read(null)).toBeNull();
+    first.update(context);
+    expect(first.read(context)).toBe("Add focused tests");
+    const remounted = createPromptSuggestionLifecycle(cache);
+    remounted.update(context);
+    expect(remounted.read(context)).toBe("Add focused tests");
+    expect(remounted.begin()).toBeNull();
+    remounted.dismiss();
+    expect(first.read(context)).toBeNull();
+  });
+
+  it("does not let an earlier turn overwrite the next turn's suggestion", () => {
+    const lifecycle = createPromptSuggestionLifecycle(createPromptSuggestionCache());
+    const input = fixture();
+    lifecycle.update(promptSuggestionContext(input));
+    const earlier = lifecycle.begin()!;
+    input.thread.latestRun.runId = RunId.make("next-turn");
+    const next = promptSuggestionContext(input);
+    lifecycle.update(next);
+    lifecycle.resolve(lifecycle.begin()!, "Next suggestion");
+    expect(lifecycle.resolve(earlier, "Earlier suggestion")).toBe(false);
+    expect(lifecycle.read(next)).toBe("Next suggestion");
+  });
+
   it("consumes a turn once, including across remounts and failed requests", () => {
-    const consumed = new Set<string>();
+    const consumed = createPromptSuggestionCache();
     const context = promptSuggestionContext(fixture());
     const lifecycle = createPromptSuggestionLifecycle(consumed);
     lifecycle.update(context);
@@ -116,23 +162,25 @@ describe("prompt suggestion lifecycle", () => {
     expect(remounted.begin()).toBeNull();
   });
 
-  it("discards a late response after typing, even if the draft is cleared again", async () => {
-    const lifecycle = createPromptSuggestionLifecycle(new Set());
+  it("retains a late response after typing and restores it when the draft is cleared", async () => {
+    const lifecycle = createPromptSuggestionLifecycle(createPromptSuggestionCache());
     const context = promptSuggestionContext(fixture());
     lifecycle.update(context);
     const ticket = lifecycle.begin()!;
     const response = Promise.resolve("Add focused tests");
-    lifecycle.update(null);
+    const typing = promptSuggestionContext({ ...fixture(), draftEmpty: false });
+    lifecycle.update(typing);
+    expect(lifecycle.resolve(ticket, await response)).toBe(true);
+    expect(lifecycle.read(typing)).toBeNull();
     lifecycle.update(context);
-    expect(lifecycle.resolve(ticket, await response)).toBe(false);
-    expect(lifecycle.read(context)).toBeNull();
+    expect(lifecycle.read(context)).toBe("Add focused tests");
     expect(lifecycle.begin()).toBeNull();
   });
 
   it.each(["thread", "turn", "environment", "settings"])(
     "ignores a response after a %s change",
     (change) => {
-      const lifecycle = createPromptSuggestionLifecycle(new Set());
+      const lifecycle = createPromptSuggestionLifecycle(createPromptSuggestionCache());
       const input = fixture();
       const oldContext = promptSuggestionContext(input);
       lifecycle.update(oldContext);
@@ -145,7 +193,7 @@ describe("prompt suggestion lifecycle", () => {
       const newContext = promptSuggestionContext(input);
       expect(lifecycle.read(newContext)).toBeNull();
       lifecycle.update(newContext);
-      expect(lifecycle.resolve(oldTicket, "Old suggestion")).toBe(false);
+      lifecycle.resolve(oldTicket, "Old suggestion");
       expect(lifecycle.read(newContext)).toBeNull();
       if (change !== "settings") {
         const newTicket = lifecycle.begin()!;
@@ -158,7 +206,7 @@ describe("prompt suggestion lifecycle", () => {
   );
 
   it("dismisses both pending and visible suggestions without regenerating", () => {
-    const lifecycle = createPromptSuggestionLifecycle(new Set());
+    const lifecycle = createPromptSuggestionLifecycle(createPromptSuggestionCache());
     const input = fixture();
     let context = promptSuggestionContext(input);
     lifecycle.update(context);
