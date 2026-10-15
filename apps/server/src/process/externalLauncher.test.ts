@@ -22,6 +22,13 @@ import * as ExternalLauncher from "./externalLauncher.ts";
 // Windows drive letters break mocked POSIX PATH splitting; these tests also require /bin/sh stubs.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
+function decodeRevealSource(command: ChildProcess.StandardCommand): string {
+  const helper = Buffer.from(command.args.at(-1) ?? "", "base64").toString("utf16le");
+  const encodedSource = /-EncodedCommand ([A-Za-z0-9+/=]+)'/.exec(helper)?.[1];
+  assert.ok(encodedSource, "reveal must run through the console-free shell helper");
+  return Buffer.from(encodedSource, "base64").toString("utf16le");
+}
+
 interface MockSpawnResult {
   readonly spawnError?: PlatformError.PlatformError;
   readonly exitCode?: number;
@@ -224,13 +231,12 @@ it.effect.skipIf(windowsHost)(
       assert.equal(result.editors.includes("file-manager"), true);
       assert.ok(spawned);
       assert.equal(spawned.command, "powershell.exe");
-      assert.equal(spawned.options.detached, true);
-      const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
-      const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
-      assert.equal(
+      const decodedCommand = decodeRevealSource(spawned);
+      assert.include(
         decodedCommand,
-        "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '\"') }",
+        "$target = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4'",
       );
+      assert.equal(spawned.options.windowsHide, true);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

@@ -32,6 +32,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -46,12 +47,14 @@ export {
   ExternalLauncherUnsupportedTargetError,
 } from "@t3tools/contracts";
 export type { LaunchEditorInput };
+const isEditorSpawnError = Schema.is(ExternalLauncherEditorSpawnError);
 interface EditorLaunch {
   readonly editor: EditorId;
   readonly target: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly detached?: boolean;
+  readonly waitForExit?: boolean;
 }
 
 interface ProcessLaunch {
@@ -513,6 +516,17 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
   }
 
+  if (platform === "win32") {
+    // Preferred-editor links can carry :line:column. The default application
+    // needs the real Windows path, just like an explicit reveal does.
+    const target = normalizeWindowsFileManagerPath(input.cwd);
+    return fileExplorerHelperLaunch(
+      input.cwd,
+      resolvePowerShellPath(env),
+      `$ErrorActionPreference = 'Stop'\nStart-Process -FilePath ${escapePowerShellStringLiteral(target)}`,
+    );
+  }
+
   return {
     editor: editorDef.id,
     target: input.cwd,
@@ -537,11 +551,7 @@ function buildFileManagerRevealPowerShellSource(target: string, parent: string):
 /**
  * PowerShell source that selects `target` in File Explorer.
  *
- * `Start-Process explorer.exe /select` goes through ShellExecute. The desktop
- * app starts the server with `windowsHide`, and ShellExecute from that process
- * returns success without ever showing a window. `SHOpenFolderAndSelectItems`
- * opens the folder from the same hidden process. The path stays inside a
- * PowerShell string, so spaces, apostrophes, and characters such as `[` are
+ * The path stays inside a PowerShell string, so spaces, apostrophes, and `[` are
  * literal — Explorer's `/select` switch misparses those when Node quotes the
  * argument.
  *
@@ -550,7 +560,8 @@ function buildFileManagerRevealPowerShellSource(target: string, parent: string):
  */
 export function buildFileExplorerRevealPowerShellSource(target: string): string {
   const literal = escapePowerShellStringLiteral(target);
-  return `$ProgressPreference = 'SilentlyContinue'
+  return `$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -564,34 +575,80 @@ public static class T3FileExplorerReveal {
 }
 '@
 $target = ${literal}
+if (-not (Test-Path -LiteralPath $target)) {
+  $target = [System.IO.Path]::GetDirectoryName($target)
+}
+if ([string]::IsNullOrEmpty($target) -or -not (Test-Path -LiteralPath $target)) {
+  throw "Cannot find the file or its containing folder: $target"
+}
 $pidl = [T3FileExplorerReveal]::ILCreateFromPath($target)
 if ($pidl -eq [IntPtr]::Zero) {
-  $parent = Split-Path -LiteralPath $target -Parent
-  if ([string]::IsNullOrEmpty($parent)) { exit 1 }
-  $pidl = [T3FileExplorerReveal]::ILCreateFromPath($parent)
-  if ($pidl -eq [IntPtr]::Zero) { exit 1 }
+  throw "Cannot find the file or its containing folder: $target"
 }
-$hr = [T3FileExplorerReveal]::SHOpenFolderAndSelectItems($pidl, 0, $null, 0)
-[T3FileExplorerReveal]::ILFree($pidl)
-if ($hr -ne 0) { exit 1 }
+try {
+  $hr = [T3FileExplorerReveal]::SHOpenFolderAndSelectItems($pidl, 0, $null, 0)
+  [System.Runtime.InteropServices.Marshal]::ThrowExceptionForHR($hr)
+} finally {
+  [T3FileExplorerReveal]::ILFree($pidl)
+}
 `;
 }
 
-function powerShellFileManagerLaunch(
+/**
+ * Run shell activation without a console or a hidden GUI startup state.
+ * Node's windowsHide sets STARTF_USESHOWWINDOW/SW_HIDE, which the shell can
+ * propagate to Explorer even when SHOpenFolderAndSelectItems returns S_OK.
+ * ProcessStartInfo.CreateNoWindow suppresses only the helper's console; its
+ * default Normal WindowStyle leaves STARTF_USESHOWWINDOW unset.
+ */
+export function buildFileExplorerHelperPowerShellSource(source: string): string {
+  return `$ErrorActionPreference = 'Stop'
+$startInfo = New-Object System.Diagnostics.ProcessStartInfo
+$startInfo.FileName = Join-Path $PSHOME 'powershell.exe'
+$startInfo.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -STA -EncodedCommand ${encodeUtf16LeBase64(source)}'
+$startInfo.UseShellExecute = $false
+$startInfo.CreateNoWindow = $true
+$startInfo.RedirectStandardError = $true
+$helper = New-Object System.Diagnostics.Process
+$helper.StartInfo = $startInfo
+try {
+  [void]$helper.Start()
+  $stderr = $helper.StandardError.ReadToEndAsync()
+  if (-not $helper.WaitForExit(10000)) {
+    $helper.Kill()
+    throw 'File Explorer did not respond within 10 seconds.'
+  }
+  [Console]::Error.Write($stderr.GetAwaiter().GetResult())
+  exit $helper.ExitCode
+} finally {
+  $helper.Dispose()
+}
+`;
+}
+
+function fileExplorerHelperLaunch(
   target: string,
-  source: string,
   powershellCommand: string,
+  source: string,
 ): EditorLaunch {
   return {
     editor: "file-manager",
     target,
     command: powershellCommand,
-    args: [...POWERSHELL_ARGUMENTS_PREFIX, encodeUtf16LeBase64(source)],
+    waitForExit: true,
+    args: [
+      ...POWERSHELL_ARGUMENTS_PREFIX,
+      encodeUtf16LeBase64(buildFileExplorerHelperPowerShellSource(source)),
+    ],
   };
 }
 
 function normalizeWindowsFileManagerPath(target: string): string {
-  return target.replaceAll("/", "\\");
+  const filePath = Option.match(parseTargetPathAndPosition(target), {
+    onNone: () => target,
+    onSome: ({ path }) => path,
+  });
+  return filePath.replaceAll("/", "\\");
 }
 
 const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch")(function* (
@@ -611,14 +668,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   if (platform === "win32") {
     const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
     const windowsTarget = normalizeWindowsFileManagerPath(target);
-    return {
-      ...powerShellFileManagerLaunch(
-        target,
-        buildFileManagerRevealPowerShellSource(windowsTarget, path.dirname(windowsTarget)),
-        resolvePowerShellPath(env),
-      ),
-      detached: WINDOWS_POWERSHELL_DETACHED,
-    };
+    return fileExplorerHelperLaunch(target, resolvePowerShellPath(env), buildFileManagerRevealPowerShellSource(windowsTarget, path.dirname(windowsTarget)));
   }
 
   if (
@@ -636,7 +686,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
       const source = explorerTarget.includes('"')
         ? `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)}`
         : buildFileManagerRevealPowerShellSource(explorerTarget, parent);
-      return powerShellFileManagerLaunch(target, source, WSL_POWERSHELL_COMMAND);
+      return fileExplorerHelperLaunch(target, WSL_POWERSHELL_COMMAND, source);
     }
     if (hasGraphicalLinuxSession(env) && (yield* isUsableFileManagerCommand("xdg-open", env))) {
       const path = yield* Path.Path;
@@ -769,6 +819,51 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, { env });
   if (spawnCommand.shell && launch.args.some((arg) => WINDOWS_SHIM_UNSAFE_ARG_PATTERN.test(arg))) {
     return yield* new ExternalLauncherUnsupportedTargetError({ editor: launch.editor });
+  }
+  if (launch.waitForExit) {
+    // PowerShell is a short-lived shell helper, not the application being opened.
+    // Wait for its result so a failed reveal reaches the client's error toast.
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    yield* Effect.gen(function* () {
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          shell: spawnCommand.shell,
+          detached: false,
+          windowsHide: true,
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        }),
+      );
+      const [exitCode, stderr] = yield* Effect.all(
+        [handle.exitCode, handle.stderr.pipe(Stream.decodeText(), Stream.mkString)],
+        { concurrency: "unbounded" },
+      );
+      if (exitCode !== 0) {
+        return yield* new ExternalLauncherEditorSpawnError({
+          editor: launch.editor,
+          target: launch.target,
+          command: spawnCommand.command,
+          args: spawnCommand.args,
+          cause: new Error(stderr.trim() || `File reveal exited with code ${exitCode}`),
+        });
+      }
+    }).pipe(
+      Effect.timeout("15 seconds"),
+      Effect.scoped,
+      Effect.mapError((cause) =>
+        isEditorSpawnError(cause)
+          ? cause
+          : new ExternalLauncherEditorSpawnError({
+              editor: launch.editor,
+              target: launch.target,
+              command: spawnCommand.command,
+              args: spawnCommand.args,
+              cause,
+            }),
+      ),
+    );
+    return;
   }
   yield* launchAndUnref(
     {
