@@ -1719,7 +1719,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))));
 
       assert.equal(resolved.appId, "com.t3tools.t3code");
-      assert.equal(resolved.productName, "T3 Code (Alpha)");
+      assert.equal(resolved.productName, "T3 Code (Beta)");
       assert.equal(resolved.disableUpdates, false);
     }),
   );

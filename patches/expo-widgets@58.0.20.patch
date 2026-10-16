@@ -276,15 +276,3 @@ diff --git a/metro.config.js b/metro.config.js
          return context.resolveRequest(context, moduleName, platform);
        }
        if (moduleName.startsWith('react-native/')) {
-diff --git a/layout-registry.metro.config.js b/layout-registry.metro.config.js
---- a/layout-registry.metro.config.js
-+++ b/layout-registry.metro.config.js
-@@ -10,7 +10,7 @@
- config.resolver = {
-   ...config.resolver,
-   resolveRequest(context, moduleName, platform) {
--    if (fileSpecifierRe.test(moduleName)) {
-+    if (path.isAbsolute(moduleName) || fileSpecifierRe.test(moduleName)) {
-       return baseResolveRequest(context, moduleName, platform);
-     }
-     if (moduleName === 'expo-widgets') {

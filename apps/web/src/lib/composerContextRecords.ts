@@ -28,14 +28,13 @@ import { encodeComposerContextFragment } from "@t3tools/shared/composerContextCl
 import {
   collectComposerContextReferences,
   sanitizeComposerContextLabel,
+  toComposerContextId,
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 
 import {
   type ComposerContextReference,
   producerIdFromComposerContextId,
-  toComposerContextId,
-  toKindScopedComposerContextId,
 } from "./composerContextReferences";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
 import type { AttachmentUploadState } from "./attachmentUploadState";
