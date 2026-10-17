@@ -226,8 +226,8 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
       // main's skipped schema changes run before the relocated custom ones.
       yield* sql.withTransaction(sql`
         DELETE FROM effect_sql_migrations
-        WHERE (migration_id IN (54, 55, 61) AND name = 'ProjectionProjectAdditionalDirectories')
-           OR (migration_id IN (56, 62) AND name = 'RepairProjectionThreadsAutoSettleDisabledAt')
+        WHERE (migration_id IN (54, 55, 59, 61) AND name = 'ProjectionProjectAdditionalDirectories')
+           OR (migration_id IN (56, 60, 62) AND name = 'RepairProjectionThreadsAutoSettleDisabledAt')
            OR (migration_id = 63 AND name = 'PromptSuggestionUsage')
       `);
     }
