@@ -859,6 +859,17 @@ export class BoundedTerminalHistory {
   // Reading the old string's tail on each append can force chunk concatenation.
   private lastCodeUnit: number | undefined;
   private cachedValue: string | null = "";
+  private characterLength = 0;
+  private appendedCharacters = 0;
+  private generation = 0;
+  private persisted:
+    | {
+        offset: number;
+        generation: number;
+        bytes: number;
+        endsWithHighSurrogate: boolean;
+      }
+    | undefined;
 
   constructor(maxLines: number, initial: string, maxBytes = DEFAULT_HISTORY_BYTE_LIMIT) {
     this.maxLines = maxLines;
@@ -868,6 +879,7 @@ export class BoundedTerminalHistory {
 
   append(text: string): void {
     if (text.length === 0) return;
+    this.appendedCharacters += text.length;
     this.cachedValue = null;
     if (this.maxBytes <= 0 || this.maxLines <= 0) {
       this.clear();
@@ -889,6 +901,7 @@ export class BoundedTerminalHistory {
     ) {
       // Joining a split surrogate changes its UTF-8 size from 3 to 4 bytes.
       previous.data += text[0];
+      this.characterLength += 1;
       previous.byteLength += 1;
       this.byteLength += 1;
       this.lastCodeUnit = firstCode;
@@ -916,6 +929,7 @@ export class BoundedTerminalHistory {
   }
 
   private appendChunk(data: string): void {
+    this.characterLength += data.length;
     const byteLength = Buffer.byteLength(data);
     let lineBreaks = 0;
     for (let index = data.indexOf("\n"); index !== -1; index = data.indexOf("\n", index + 1)) {
@@ -937,6 +951,7 @@ export class BoundedTerminalHistory {
 
   private discardChunk(): void {
     const first = this.chunks[this.start]!;
+    this.characterLength -= first.data.length;
     this.byteLength -= first.byteLength;
     this.lineBreaks -= first.lineBreaks;
     this.chunks[this.start++] = undefined;
@@ -948,6 +963,7 @@ export class BoundedTerminalHistory {
       this.discardChunk();
       return;
     }
+    this.characterLength -= offset;
     first.data = first.data.slice(offset);
     first.byteLength -= byteLength;
     first.lineBreaks -= lineBreaks;
@@ -1006,12 +1022,72 @@ export class BoundedTerminalHistory {
   }
 
   clear(): void {
+    this.generation += 1;
+    this.characterLength = 0;
     this.chunks = [];
     this.start = 0;
     this.byteLength = 0;
     this.lineBreaks = 0;
     this.lastCodeUnit = undefined;
     this.cachedValue = "";
+  }
+
+  // Keep an append cursor rather than another full transcript. Call commit only after
+  // a successful write; clear or output arriving during I/O remains visible next time.
+  prepareWrite(compact = false): { data: string; flag: "a" | "w"; commit: () => void } | undefined {
+    const previous = this.persisted;
+    const pending = this.appendedCharacters - (previous?.offset ?? 0);
+    const sameGeneration = previous?.generation === this.generation;
+    if (sameGeneration && pending === 0 && (!compact || previous.bytes === this.byteLength)) {
+      return;
+    }
+    let append =
+      sameGeneration && !previous.endsWithHighSurrogate && pending <= this.characterLength;
+    let data: string;
+    if (append) {
+      const tail: string[] = [];
+      let remaining = pending;
+      for (let index = this.chunks.length - 1; remaining > 0; index--) {
+        const chunk = this.chunks[index]!.data;
+        tail.push(chunk.slice(Math.max(0, chunk.length - remaining)));
+        remaining -= Math.min(remaining, chunk.length);
+      }
+      data = tail.toReversed().join("");
+    } else {
+      data = this.value();
+    }
+    let bytes = (append ? previous!.bytes : 0) + Buffer.byteLength(data);
+    // Allow bounded obsolete prefixes while active, then restore the exact cap on
+    // close/clear. Reopening already applies the same byte and line limits.
+    const diskLimit =
+      this.byteLength + Math.min(this.maxBytes, Math.max(64 * 1024, this.byteLength));
+    if (append && (bytes > diskLimit || (compact && bytes !== this.byteLength))) {
+      append = false;
+      data = this.value();
+      bytes = this.byteLength;
+    }
+    const cursor = {
+      offset: this.appendedCharacters,
+      generation: this.generation,
+      bytes,
+      // UTF-8 writes replace a lone high surrogate. Rewrite when its other half arrives.
+      endsWithHighSurrogate:
+        this.lastCodeUnit !== undefined &&
+        this.lastCodeUnit >= 0xd800 &&
+        this.lastCodeUnit <= 0xdbff,
+    };
+    return {
+      data,
+      flag: append ? "a" : "w",
+      commit: () => {
+        this.persisted = cursor;
+      },
+    };
+  }
+
+  invalidatePersistence(): void {
+    // A failed append may have partially reached disk. Retry with a full replacement.
+    this.persisted = undefined;
   }
 
   value(): string {
@@ -1907,16 +1983,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return;
       }
 
+      const write = request.history.prepareWrite(request.immediate);
+      if (!write) return;
       yield* fileSystem
-        .writeFileString(historyPath(threadId, terminalId), request.history.value())
+        .writeFileString(historyPath(threadId, terminalId), write.data, { flag: write.flag })
         .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("failed to persist terminal history", {
+          Effect.tap(() => Effect.sync(write.commit)),
+          Effect.catch((error) => {
+            request.history.invalidatePersistence();
+            return Effect.logWarning("failed to persist terminal history", {
               threadId,
               terminalId,
               error,
-            }),
-          ),
+            });
+          }),
         );
     }),
   });
