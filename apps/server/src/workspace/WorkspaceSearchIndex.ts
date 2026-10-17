@@ -499,6 +499,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           pageSize: rawPageSize,
           cursor: nextCursor,
           timeBudgetMs: remainingTimeBudgetMs,
+          // No-match queries must obey the same budget as successful searches.
+          enforceTimeBudget: true,
         }),
       );
 

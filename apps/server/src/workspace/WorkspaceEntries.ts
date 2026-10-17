@@ -29,6 +29,8 @@ import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { CODE_WORKSPACE_EXTENSION } from "./CodeWorkspaceFile.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as EverythingSearch from "./EverythingSearch.ts";
+import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -153,6 +155,7 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const everything = yield* EverythingSearch.EverythingSearch;
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -160,45 +163,76 @@ export const make = Effect.gen(function* () {
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
-  const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
-    function* (cwd) {
-      const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
-        Effect.orElseSucceed(() => cwd),
-      );
-      for (const variant of WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS) {
-        const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, variant);
-        if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
-          continue;
-        }
-        const recoverRefreshFailure = Effect.fn("WorkspaceEntries.recoverRefreshFailure")(
-          function* (
-            cause:
-              | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
-              | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
-              | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
-          ) {
-            yield* Effect.logWarning("Failed to refresh workspace search index", {
-              cwd,
-              variant,
-              cause,
-            });
-            yield* workspaceSearchIndexes.invalidate(indexKey);
-          },
-        );
-        yield* Effect.gen(function* () {
-          const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-          yield* searchIndex.refresh();
-        }).pipe(
-          Effect.provide(workspaceSearchIndexes.get(indexKey)),
-          Effect.catchTags({
-            WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
-            WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
-            WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
-          }),
-        );
+  const refreshIndexes: WorkspaceEntries["Service"]["refresh"] = Effect.fn(
+    "WorkspaceEntries.refresh",
+  )(function* (cwd) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    for (const variant of WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS) {
+      const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, variant);
+      if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
+        continue;
       }
-    },
-  );
+      // Content search is on-demand. A completed turn must not warm its entire
+      // content index again while nobody is searching; active borrowers remain valid.
+      if (variant === "content") {
+        yield* workspaceSearchIndexes.invalidate(indexKey);
+        continue;
+      }
+      const recoverRefreshFailure = (
+        cause:
+          | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
+          | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
+          | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
+      ) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Failed to refresh workspace search index", {
+            cwd,
+            variant,
+            cause,
+          });
+          yield* workspaceSearchIndexes.invalidate(indexKey);
+        });
+      yield* Effect.gen(function* () {
+        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+        yield* searchIndex.refresh();
+      }).pipe(
+        Effect.provide(workspaceSearchIndexes.get(indexKey)),
+        Effect.catchTags({
+          WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
+          WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
+          WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
+        }),
+      );
+    }
+  });
+
+  // Bursts share one pending refresh. Changes arriving during a scan trigger a trailing
+  // refresh, so waiting callers cannot miss writes made after that scan started.
+  const refreshWorker = yield* makeKeyedCoalescingWorker<string, true, never, never>({
+    merge: () => true,
+    process: (cwd) => refreshIndexes(cwd),
+  });
+  const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn(
+    "WorkspaceEntries.queueRefresh",
+  )(function* (cwd) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    yield* refreshWorker.enqueue(normalizedCwd, true);
+    yield* refreshWorker.drainKey(normalizedCwd);
+  });
+
+  const searchWithEverything = Effect.fn("WorkspaceEntries.searchWithEverything")(function* (
+    input: ProjectSearchEntriesInput,
+  ) {
+    // Keep a fallback index in use until its normal idle expiry rather than run two backends.
+    if (
+      yield* RcMap.has(
+        workspaceSearchIndexes.rcMap,
+        WorkspaceSearchIndex.workspaceSearchIndexKey(input.cwd, "paths"),
+      )
+    )
+      return undefined;
+    return yield* everything.search(input);
+  });
 
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
@@ -265,6 +299,12 @@ export const make = Effect.gen(function* () {
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
+      const indexed = yield* searchWithEverything({
+        ...input,
+        cwd: normalizedCwd,
+        query: normalizedQuery,
+      });
+      if (indexed) return indexed;
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
@@ -389,6 +429,8 @@ export const make = Effect.gen(function* () {
           truncated: false,
         };
       }
+      const indexed = yield* searchWithEverything({ cwd: normalizedCwd, query: "", limit: 25_000 });
+      if (indexed) return indexed;
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
@@ -456,5 +498,6 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(
   Layer.provide(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer),
+  Layer.provide(EverythingSearch.layer),
   Layer.provide(VcsProcess.layer),
 );

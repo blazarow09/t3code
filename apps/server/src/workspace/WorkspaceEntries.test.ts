@@ -593,3 +593,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
   });
 });
+
+it.effect(
+  "invalidates content indexes without rescanning and rebuilds fresh contents on demand",
+  () =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTempDir({ prefix: "t3-content-lazy-refresh-" });
+      yield* writeTextFile(cwd, "content.txt", "before-change\n");
+      const entries = yield* WorkspaceEntries.WorkspaceEntries;
+      const create = vi.spyOn(FileFinder, "create");
+      const scan = vi.spyOn(FileFinder.prototype, "scanFiles");
+      const input = {
+        cwd,
+        query: "before-change",
+        limit: 10,
+        caseSensitive: true,
+        wholeWord: false,
+        useRegex: false,
+      };
+      expect((yield* entries.searchContents(input)).matches.length).toBe(1);
+      yield* writeTextFile(cwd, "content.txt", "after-change\n");
+      yield* entries.refresh(cwd);
+      expect(scan).not.toHaveBeenCalled();
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(
+        (yield* entries.searchContents({ ...input, query: "after-change" })).matches.length,
+      ).toBe(1);
+      expect(create).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);

@@ -139,3 +139,45 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
     }),
   ),
 );
+
+it.effect("reports an empty partial page when a no-match grep exhausts its budget", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      const cursor = { __brand: "GrepCursor", _offset: 1 } as GrepCursor;
+      const grep = vi.fn((_query: string, options?: GrepOptions) => {
+        expect(options?.enforceTimeBudget).toBe(true);
+        now = 251;
+        return {
+          ok: true as const,
+          value: {
+            items: [],
+            totalMatched: 0,
+            totalFilesSearched: 1,
+            totalFiles: 1000,
+            filteredFileCount: 1000,
+            nextCursor: cursor,
+          },
+        };
+      });
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        grep,
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      expect(
+        yield* searchIndex.searchContents({
+          query: "absent",
+          limit: 10,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        }),
+      ).toEqual({ matches: [], truncated: true });
+      expect(grep).toHaveBeenCalledTimes(1);
+    }),
+  ),
+);
