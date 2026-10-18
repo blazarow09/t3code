@@ -581,8 +581,12 @@ export default function ChatView(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
-  const [composerInstanceOverride, setComposerInstanceOverride] =
-    useState<ProviderInstanceId | null>(null);
+  const [composerOverride, setComposerOverride] = useState<{
+    threadKey: string;
+    instanceId: ProviderInstanceId;
+  } | null>(null);
+  const composerInstanceOverride =
+    composerOverride?.threadKey === routeThreadKey ? composerOverride.instanceId : null;
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -1248,6 +1252,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
+    overrideInstanceId: composerInstanceOverride,
     entries: providerInstanceEntries,
     candidateInstanceIds: [
       selectedProviderByThreadId,
@@ -3533,6 +3538,9 @@ export default function ChatView(props: ChatViewProps) {
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeProjectId={activeProject?.id ?? null}
                               activeContextWindow={activeContextWindow}
+                              usageLimitSources={
+                                serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES
+                              }
                               compactThreadUnavailable={compactThreadUnavailable}
                               compactDisabled={compactDisabled}
                               compactDisabledReason={compactDisabledReason}

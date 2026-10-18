@@ -355,7 +355,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   renderHtmlRender,
   turnItemSource,
   parentThreadLink = null,
-  workflowOpening = null,
   onForkFromRun,
   supportsConversationRollback,
   threadStartCheckpointReady = false,
@@ -588,8 +587,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runlessWorkActive,
       })
     : null;
-  const activeFindRunId =
-    findActive && activeFindMatch ? findFoldRunIds?.get(activeFindMatch.entryId) : undefined;
+  const activeFindRunId = activeFindMatch
+    ? findFoldRunIds?.get(activeFindMatch.entryId)
+    : undefined;
   const [expandedFindRunId, setExpandedFindRunId] = useState<RunId | undefined>();
   if (expandedFindRunId !== activeFindRunId) {
     setExpandedFindRunId(activeFindRunId);
@@ -1441,9 +1441,7 @@ function keyExtractor(item: MessagesTimelineRow) {
 
 // LegendList averages by type; length buckets prevent inflated estimates and nested-update loops.
 function getItemType(item: MessagesTimelineRow) {
-  if (item.kind !== "message") return item.kind;
-  const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
-  return `message:${item.message.role}:${lengthBucket}`;
+  return item.kind === "message" ? `message:${item.message.role}` : item.kind;
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
@@ -1514,7 +1512,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserMessageRow row={row} /> : null}
+      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
@@ -1595,8 +1593,18 @@ function ContextCompactionTimelineRow({
         ref={row.active ? observeVisibleAnimation : undefined}
         className="relative min-w-0 overflow-hidden"
       >
-        {content}
-        {row.active ? <ActivityShimmerOverlay>{content}</ActivityShimmerOverlay> : null}
+        <span className="flex items-center gap-1.5">
+          <Minimize2Icon aria-hidden="true" className="size-3" />
+          {row.label}
+        </span>
+        {row.active ? (
+          <ActivityShimmerOverlay>
+            <span className="flex items-center gap-1.5">
+              <Minimize2Icon aria-hidden="true" className="size-3" />
+              {row.label}
+            </span>
+          </ActivityShimmerOverlay>
+        ) : null}
       </span>
       <span className={cn("h-px flex-1", row.failed ? "bg-destructive/30" : "bg-border/70")} />
     </div>
@@ -1680,7 +1688,7 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
           estimatedItemSize={compactWorkEntryHeight}
           drawDistance={240}
           recycleItems
-          {...(initialScrollIndex ? { initialScrollIndex } : {})}
+          {...(initialScrollIndex ? { initialScrollIndex } : { initialScrollAtEnd: true })}
           maintainScrollAtEnd={
             appendState.follow ? { animated: false, on: { dataChange: true } } : false
           }
@@ -1695,6 +1703,9 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
           onScroll={handleScroll}
           onLayout={updateScrollFades}
           onItemSizeChanged={updateExpandedContentHeight}
+          onWheel={noteUserMovedScroll}
+          onKeyDown={noteUserMovedScrollOnKey}
+          onPointerDown={noteUserMovedScroll}
           tabIndex={0}
           role="region"
           aria-label="Tool calls"
@@ -2118,17 +2129,50 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const images =
+    !row.expanded && ctx.threadRef
+      ? (row.viewedImagePaths ?? [])
+          .map((path) =>
+            resolveViewedImageAsset(path, {
+              threadId: ctx.threadRef!.threadId,
+              workspaceRoot: ctx.workspaceRoot,
+            }),
+          )
+          .filter((image) => image !== null)
+      : [];
   return (
-    <WorkGroupHeader
-      label={row.summary}
-      iconName={row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
-      toolIcon={row.toolIcon}
-      failed={row.hasFailure}
-      expanded={row.expanded}
-      createdAt={row.createdAt}
-      timestampFormat={ctx.timestampFormat}
-      onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-    />
+    <>
+      <WorkGroupHeader
+        label={row.summary}
+        iconName={
+          row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)
+        }
+        toolIcon={row.toolIcon}
+        failed={row.hasFailure}
+        expanded={row.expanded}
+        createdAt={row.createdAt}
+        timestampFormat={ctx.timestampFormat}
+        onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      />
+      {images.length > 0 && ctx.threadRef ? (
+        <WorkLogDetails kind="media">
+          <div className="flex flex-wrap gap-2">
+            {images.map((image, index) => (
+              <ChatMarkdownAssetImage
+                key={row.viewedImagePaths?.[index] ?? index}
+                environmentId={ctx.threadRef!.environmentId}
+                resource={image.resource}
+                alt={image.alt}
+                srcFragment={image.srcFragment}
+                workspaceRoot={ctx.workspaceRoot}
+                maxHeightRem={10}
+                onImageExpand={ctx.onImageExpand}
+              />
+            ))}
+          </div>
+        </WorkLogDetails>
+      ) : null}
+    </>
   );
 }
 

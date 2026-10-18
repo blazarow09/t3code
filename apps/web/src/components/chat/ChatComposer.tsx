@@ -936,6 +936,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     settings,
     activeProjectId,
     threadRef: composerDraftTarget,
+    overrideInstanceId: composerInstanceOverride ?? null,
     threadModelSelection: activeThreadModelSelection,
     projectModelSelection: activeProjectDefaultModelSelection,
     promptInjectionState: getComposerPromptInjectionState(prompt),
@@ -1056,21 +1057,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? selectedProviderStatus.reportsContextWindow === true
       : null,
   });
-  const leftoverUsage = useMemo(
-    () =>
-      leftoverUsageForInstance(
-        collectProviderUsageLimits(selectedInstanceId, providerStatuses, usageLimitSources, 0),
-        selectedInstanceId,
-        [selectedModel, activeThreadModelDisplayName, activeThreadModelSelection?.model],
-      ),
-    [
-      activeThreadModelDisplayName,
-      activeThreadModelSelection?.model,
-      providerStatuses,
-      selectedInstanceId,
-      selectedModel,
-      usageLimitSources,
-    ],
+  const leftoverUsage = leftoverUsageForInstance(
+    collectProviderUsageLimits(selectedInstanceId, providerStatuses, usageLimitSources, 0),
+    selectedInstanceId,
+    [selectedModel, activeThreadModelDisplayName, activeThreadModelSelection?.model],
   );
   const showUsageMeter = shouldShowComposerUsageMeter({
     hasLeftoverUsage: leftoverUsage !== null,

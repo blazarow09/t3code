@@ -60,6 +60,7 @@ import {
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
+  FolderTreeIcon,
   FolderPlusIcon,
   MessageSquareDashedIcon,
   LinkIcon,
@@ -241,6 +242,9 @@ import { readPullRequestListPreferences } from "~/components/pullRequest/pullReq
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 
+function isCodeWorkspacePath(rawPath: string): boolean {
+  return rawPath.trim().toLowerCase().endsWith(".code-workspace");
+}
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
@@ -409,6 +413,12 @@ function OpenCommandPaletteDialog(props: {
   });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
   const startTriage = useStartTriage();
+  const updateProject = useAtomCommand(projectEnvironment.update, {
+    reportFailure: false,
+  });
+  const readCodeWorkspace = useAtomCommand(filesystemEnvironment.readCodeWorkspace, {
+    reportFailure: false,
+  });
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -661,6 +671,7 @@ function OpenCommandPaletteDialog(props: {
           input: {
             partialPath: browsePath.directoryPath,
             ...(currentProjectCwdForBrowse ? { cwd: currentProjectCwdForBrowse } : {}),
+            includeWorkspaceFiles: true,
           },
         })
       : null,
@@ -671,7 +682,12 @@ function OpenCommandPaletteDialog(props: {
     hasBrowseTarget && !browseAccess.isPending && !browseAccess.canReadFiles
       ? (browseAccess.error ?? "This connection cannot browse host folders.")
       : null;
-  const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
+  const allBrowseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
+  // A clone destination must be a folder, so workspace files only show when adding.
+  const browseEntries =
+    addProjectCloneFlow === null
+      ? allBrowseEntries
+      : allBrowseEntries.filter((entry) => entry.kind !== "workspaceFile");
   const { visibleEntries: visibleBrowseEntries, exactEntry: exactBrowseEntry } =
     pinnedCloneDirectoryName
       ? filterPinnedBrowseEntries({
@@ -703,6 +719,7 @@ function OpenCommandPaletteDialog(props: {
       input: {
         partialPath,
         ...(cwd ? { cwd } : {}),
+        includeWorkspaceFiles: true,
       },
     });
   };
@@ -849,16 +866,27 @@ function OpenCommandPaletteDialog(props: {
       popView();
     }
   }
-
-  const startAddProjectBrowse = async (environmentId: EnvironmentId): Promise<void> => {
+  const startAddProjectBrowse = async (
+    environmentId: EnvironmentId,
+    options?: {
+      readonly pickCodeWorkspaceFile?: boolean;
+    },
+  ): Promise<void> => {
     const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
     const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
     const browseCwd = getBrowseCwdForEnvironment(environmentId);
-    const view: CommandPaletteView = {
-      addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
-      groups: [],
-      initialQuery,
-    };
+    const view: CommandPaletteView = options?.pickCodeWorkspaceFile
+      ? {
+          addonIcon: <FolderTreeIcon className={ADDON_ICON_CLASS} />,
+          groups: [],
+          initialQuery,
+          pickCodeWorkspaceFile: true,
+        }
+      : {
+          addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+          groups: [],
+          initialQuery,
+        };
 
     await browseNavigation.run(
       () =>
@@ -925,6 +953,18 @@ function OpenCommandPaletteDialog(props: {
         keepOpen: true,
         run: async () => {
           await startAddProjectBrowse(environmentId);
+        },
+      },
+      {
+        kind: "action",
+        value: `action:add-project:${environmentId}:workspace-file`,
+        searchTerms: ["workspace", "code-workspace", "vscode", "cursor", "multi-root", "folders"],
+        title: "Workspace file",
+        description: "Import a VS Code or Cursor .code-workspace",
+        icon: <FolderTreeIcon className={ITEM_ICON_CLASS} />,
+        keepOpen: true,
+        run: async () => {
+          await startAddProjectBrowse(environmentId, { pickCodeWorkspaceFile: true });
         },
       },
     ];
@@ -1649,6 +1689,11 @@ function OpenCommandPaletteDialog(props: {
     readonly rawCwd: string;
     readonly platform: string;
     readonly currentProjectCwd: string | null;
+    /** Set when importing a `.code-workspace` file; rawCwd is then its folder. */
+    readonly workspace?: {
+      readonly title: string;
+      readonly additionalDirectories: ReadonlyArray<string>;
+    };
   }) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === input.environmentId,
@@ -1695,6 +1740,29 @@ function OpenCommandPaletteDialog(props: {
       cwd,
     );
     if (existing) {
+      if (input.workspace) {
+        // Re-importing refreshes the folder list from the workspace file.
+        const updateResult = await updateProject({
+          environmentId: input.environmentId,
+          input: {
+            projectId: existing.id,
+            additionalDirectories: input.workspace.additionalDirectories,
+          },
+        });
+        if (updateResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(updateResult)) {
+            const error = squashAtomCommandFailure(updateResult);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to import workspace",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return;
+        }
+      }
       const latestThread = getLatestThreadForProject(
         threads.filter((thread) => thread.environmentId === existing.environmentId),
         existing.id,
@@ -1737,14 +1805,18 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
+
     const projectId = newProjectId();
     const createResult = await createProject({
       environmentId: input.environmentId,
       input: {
         projectId,
-        title: inferProjectTitleFromPath(cwd),
+        title: input.workspace?.title ?? inferProjectTitleFromPath(cwd),
         workspaceRoot: cwd,
-        createWorkspaceRootIfMissing: true,
+        createWorkspaceRootIfMissing: input.workspace === undefined,
+        ...(input.workspace
+          ? { additionalDirectories: input.workspace.additionalDirectories }
+          : {}),
         defaultModelSelection: null,
       },
     });
@@ -1778,10 +1850,45 @@ function OpenCommandPaletteDialog(props: {
     }
     setOpen(false);
   };
+  // Adds a folder, or imports a `.code-workspace` file as a project rooted at its folder.
+  const addProjectPath = async (input: {
+    readonly environmentId: EnvironmentId;
+    readonly rawCwd: string;
+    readonly platform: string;
+    readonly currentProjectCwd: string | null;
+  }) => {
+    if (!isCodeWorkspacePath(input.rawCwd)) {
+      await handleAddProjectForEnvironment(input);
+      return;
+    }
+    const workspaceResult = await readCodeWorkspace({
+      environmentId: input.environmentId,
+      input: { path: resolveProjectPathForDispatch(input.rawCwd, input.currentProjectCwd) },
+    });
+    if (workspaceResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(workspaceResult)) {
+        const error = squashAtomCommandFailure(workspaceResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to import workspace",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+      return;
+    }
+    await handleAddProjectForEnvironment({
+      ...input,
+      rawCwd: workspaceResult.value.workspaceRoot,
+      currentProjectCwd: null,
+      workspace: workspaceResult.value,
+    });
+  };
 
   const handleAddProject = async (rawCwd: string) => {
     if (!browseEnvironmentId) return;
-    await handleAddProjectForEnvironment({
+    await addProjectPath({
       environmentId: browseEnvironmentId,
       rawCwd,
       platform: browseEnvironmentPlatform,
@@ -1829,6 +1936,7 @@ function OpenCommandPaletteDialog(props: {
     if (!addProjectCloneFlow) {
       return;
     }
+
     if (!canCreateProjectInEnvironment(browseEnvironment?.connection.phase)) {
       toastManager.add(
         stackedThreadToast({
@@ -1922,6 +2030,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
+
     if (rawDestination.length === 0 || isRemoteProjectCloning) return;
 
     if (isUnsupportedWindowsProjectPath(rawDestination, browseEnvironmentPlatform)) {
@@ -1986,7 +2095,7 @@ function OpenCommandPaletteDialog(props: {
       addProjectCloneFlow.remoteUrl,
     );
     const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
-    await waitForProject(projectRef, 3_000).catch(() => null);
+    await waitForProject(projectRef, 3000).catch(() => null);
     const navigationResult = await settlePromise(() => handleNewThread(projectRef));
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
@@ -2048,8 +2157,10 @@ function OpenCommandPaletteDialog(props: {
     canBrowseUp,
     upIcon: <CornerLeftUpIcon className={ITEM_ICON_CLASS} />,
     directoryIcon: <FolderIcon className={ITEM_ICON_CLASS} />,
+    workspaceFileIcon: <FolderTreeIcon className={ITEM_ICON_CLASS} />,
     browseUp,
     browseTo,
+    importWorkspaceFile: handleAddProject,
   });
   const cloneDestinationBrowseGroups = browseGroups.map((group) =>
     group.value === "directories" ? { ...group, label: "Select where to clone" } : group,
@@ -2065,6 +2176,7 @@ function OpenCommandPaletteDialog(props: {
       popView();
       return;
     }
+
     if (sourcesEnvironmentId !== null) {
       dispatchSearch({ type: "back" });
     }
@@ -2257,6 +2369,7 @@ function OpenCommandPaletteDialog(props: {
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase) &&
     !isRemoteProjectPending;
   const fileManagerName = getLocalFileManagerName(navigator.platform);
+  const pickCodeWorkspaceFile = currentView?.pickCodeWorkspaceFile === true;
   const canOpenProjectFromFileManager =
     isBrowsing &&
     browseEnvironmentId !== null &&
@@ -2314,6 +2427,7 @@ function OpenCommandPaletteDialog(props: {
       }
       return;
     }
+
     if (command === "thread.copyReference") {
       event.preventDefault();
       event.stopPropagation();
@@ -2352,7 +2466,11 @@ function OpenCommandPaletteDialog(props: {
       event.keyCode !== 229
     ) {
       // Base UI would otherwise also click the highlighted row.
-      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+      (
+        event as typeof event & {
+          preventBaseUIHandler?: () => void;
+        }
+      ).preventBaseUIHandler?.();
       event.preventDefault();
       void submitNewProject();
       return;
@@ -2387,7 +2505,11 @@ function OpenCommandPaletteDialog(props: {
       firstItemValue &&
       !event.nativeEvent.isComposing
     ) {
-      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+      (
+        event as typeof event & {
+          preventBaseUIHandler?: () => void;
+        }
+      ).preventBaseUIHandler?.();
       event.preventDefault();
       highlightClearedRef.current = false;
       setHighlightedItemValue(firstItemValue);
@@ -2405,7 +2527,11 @@ function OpenCommandPaletteDialog(props: {
         highlightedItemValue ?? firstItemValue ?? null,
       );
       if (highlightedItem) {
-        (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        (
+          event as typeof event & {
+            preventBaseUIHandler?: () => void;
+          }
+        ).preventBaseUIHandler?.();
         event.preventDefault();
         event.stopPropagation();
         executeItem(highlightedItem);
@@ -2466,6 +2592,7 @@ function OpenCommandPaletteDialog(props: {
       const pickerOptions = {
         ...(fileManagerInitialPath ? { initialPath: fileManagerInitialPath } : {}),
         ...(pickerTargetEnvironmentId ? { targetEnvironmentId: pickerTargetEnvironmentId } : {}),
+        ...(pickCodeWorkspaceFile ? { codeWorkspaceFile: true } : {}),
       };
       pickedPath = await api.dialogs.pickFolder(
         Object.keys(pickerOptions).length > 0 ? pickerOptions : undefined,
@@ -2478,6 +2605,7 @@ function OpenCommandPaletteDialog(props: {
     if (!pickedPath) {
       return;
     }
+
     if (parseWslUncPath(pickedPath)) {
       if (desktopWslState === null) {
         desktopWslState = (await window.desktopBridge?.getWslState().catch(() => null)) ?? null;
@@ -2520,7 +2648,7 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
-      await handleAddProjectForEnvironment({
+      await addProjectPath({
         environmentId: selection.environmentId,
         rawCwd: selection.linuxPath,
         platform: "Linux",
