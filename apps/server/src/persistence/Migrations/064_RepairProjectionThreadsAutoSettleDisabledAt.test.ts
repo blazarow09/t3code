@@ -10,6 +10,29 @@ import migrateProjectAdditionalDirectories from "./063_ProjectionProjectAddition
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
   "064_RepairProjectionThreadsAutoSettleDisabledAt",
   (it) => {
+    it.effect("upgrades upstream migration 63 and preserves custom migration ids", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 62 });
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
+          VALUES (63, 'DropUnusedV1Projections')`;
+        yield* runMigrations();
+        assert.deepEqual(
+          yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 63 ORDER BY migration_id`,
+          [
+            { migration_id: 63, name: "ProjectionProjectAdditionalDirectories" },
+            { migration_id: 64, name: "RepairProjectionThreadsAutoSettleDisabledAt" },
+            { migration_id: 65, name: "PromptSuggestionUsage" },
+            { migration_id: 66, name: "DropUnusedV1Projections" },
+          ],
+        );
+        assert.deepEqual(
+          yield* sql`SELECT name FROM sqlite_master WHERE name = 'projection_turns'`,
+          [],
+        );
+        assert.deepEqual(yield* runMigrations(), []);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+    );
     it.effect("upgrades published custom ids 59 and 60 without losing project data", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
@@ -75,6 +98,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
             { migration_id: 63, name: "ProjectionProjectAdditionalDirectories" },
             { migration_id: 64, name: "RepairProjectionThreadsAutoSettleDisabledAt" },
             { migration_id: 65, name: "PromptSuggestionUsage" },
+            { migration_id: 66, name: "DropUnusedV1Projections" },
           ],
         );
         assert.deepEqual(yield* runMigrations(), []);
