@@ -3,7 +3,6 @@ import { ExpandedImageDialog } from "./ExpandedImageDialog";
 import { expandedImageKey, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { AgentsPanel } from "../AgentsPanel";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
-import { Button } from "../ui/button";
 import { deriveAgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
@@ -494,6 +493,7 @@ export function ThreadRelationshipsPanel(props: {
       : (graph.nodes.get(mergeTargetThreadId)?.thread?.title ?? null);
 
   return (
+    <>
     <ThreadDetailsSection
       headingId="thread-details-lineage-heading"
       title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
@@ -501,7 +501,9 @@ export function ThreadRelationshipsPanel(props: {
       showHeading={runningCount > 0 || canDetach || related.length > 0 || active.length > 0}
       data-thread-relationships-panel
       actions={
-        canDetach ? (
+        <>
+        {agentPanelModel.hasAgents ? <ThreadDetailsControl size="icon-xs" variant="ghost" part="icon" aria-label="Inspect agents" onClick={() => setAgentsOpen(true)}><BotIcon className="size-3.5" /></ThreadDetailsControl> : null}
+        {canDetach ? (
           <Menu>
             <MenuTrigger
               render={
@@ -523,7 +525,8 @@ export function ThreadRelationshipsPanel(props: {
               </MenuItem>
             </MenuPopup>
           </Menu>
-        ) : null
+        ) : null}
+        </>
       }
     >
       {groups.map((group) => (
@@ -676,78 +679,55 @@ export function ThreadRelationshipsPanel(props: {
                     key={threadId}
                     group={workflowGroup}
                     providerInstanceId={agent.providerInstanceId}
+                    origin={agent.origin}
+                    modelSelection={agent.modelSelection}
                     provider={provider}
                     providers={providers}
                     driver={providerDriver}
-                    onOpenThread={(memberThreadId) => openThread(memberThreadId as ThreadId)}
-                    isThreadAvailable={(memberThreadId) =>
-                      graph.nodes.get(memberThreadId as ThreadId)?.missing === false
-                    }
-                    onStop={canStopWorkflow ? () => void stopWorkflow(agent.id) : undefined}
-                    stopping={stoppingId === agent.id}
-                    stopDisabled={stoppingId !== null}
-                    header={relationshipLink}
+                    elapsed={<AgentElapsed agent={agent} />}
+                    status={agent.status}
+                    result={agent.result}
+                    progress={agent.progress}
+                    parentThread={currentThread ?? undefined}
+                    childThread={node?.thread ?? undefined}
+                    parentProject={currentProject}
+                    childProject={project}
                   />
+                ) : (
+                  relationshipHint
                 );
-              }
-              return (
-                <li key={threadId} className="group relative flex h-8 items-center rounded-lg">
-                  {isMergeTarget ? (
-                    <div className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
-                      <Tooltip>
-                        <TooltipTrigger
-                          delay={200}
-                          render={
-                            <ThreadDetailsControl
-                              size="sm"
-                              variant="ghost"
-                              part="primary"
-                              aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
-                              disabled={node?.missing === true}
-                              onClick={() => openThread(threadId)}
-                            />
-                          }
-                        >
-                          {relationshipContent}
-                        </TooltipTrigger>
-                        <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
-                      </Tooltip>
+                const relationshipContent = (
+                  <>
+                    <ThreadRelationshipIcon
+                      driver={isSubagent && !isParent ? providerDriver : undefined}
+                      provider={provider}
+                      fallbackIcon={RelationshipIcon}
+                      status={rowStatus}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+                        {threadTitle}
+                      </span>
+                    </span>
+                    {agent ? null : (
+                      <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                    )}
+                    {agent &&
+                    !failed &&
+                    (deriveSubagentElapsedMs(agent, 0) !== null || canStopWorkflow) ? (
                       <span
-                        aria-hidden="true"
-                        className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS}
-                      />
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <ThreadDetailsControl
-                              size="sm"
-                              variant="ghost"
-                              part="secondary"
-                              aria-label={
-                                parentTitle
-                                  ? `Merge back to ${parentTitle}`
-                                  : "Merge back to source conversation"
-                              }
-                              disabled={!canMerge || busyAction !== null}
-                              onClick={() => void merge()}
-                            >
-                              {busyAction === "merge" ? (
-                                <LoaderCircleIcon className="size-3 animate-spin" />
-                              ) : (
-                                <PullRequestGlyph.merged className="size-3" />
-                              )}
-                            </ThreadDetailsControl>
-                          }
-                        />
-                        <TooltipPopup side="left">
-                          {latestMergeBackRun === null
-                            ? "Complete a run in this fork before merging it back"
-                            : parentTitle
-                              ? `Merge this conversation back into ${parentTitle}`
-                              : "Merge this conversation back into its source"}
-                        </TooltipPopup>
-                      </Tooltip>
-                      <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
+                        className={`shrink-0 text-2xs font-normal tabular-nums text-muted-foreground ${canStopWorkflow ? "min-w-6 text-end" : ""} ${trailingVisibilityClass}`}
+                      >
+                        <AgentElapsed agent={agent} compact />
+                      </span>
+                    ) : !isMergeTarget ? (
+                      <span
+                        className={
+                          workflowGroup
+                            ? "sr-only"
+                            : `shrink-0 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"} ${trailingVisibilityClass}`
+                        }
+                      >
                         {threadRelationshipStatusLabel(rowStatus)}
                       </span>
                     </div>
@@ -801,5 +781,27 @@ export function ThreadRelationshipsPanel(props: {
         </ThreadLineageRowList>
       ) : null}
     </ThreadDetailsSection>
+      <Dialog open={agentsOpen} onOpenChange={setAgentsOpen}>
+        <DialogPopup>
+          <DialogTitle>Agents</DialogTitle>
+          <div className="h-[min(65dvh,36rem)] min-h-0">
+            <AgentsPanel
+              model={agentPanelModel}
+              environmentId={props.environmentId}
+              threadId={props.threadId}
+              visible={agentsOpen}
+              onImageExpand={setExpandedAgentImage}
+            />
+          </div>
+        </DialogPopup>
+      </Dialog>
+      {expandedAgentImage ? (
+        <ExpandedImageDialog
+          key={expandedImageKey(expandedAgentImage)}
+          preview={expandedAgentImage}
+          onClose={() => setExpandedAgentImage(null)}
+        />
+      ) : null}
+    </>
   );
 }
