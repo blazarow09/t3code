@@ -63,6 +63,8 @@ class WatchStoppedError extends Schema.TaggedError<WatchStoppedError>()("WatchSt
 }
 
 const isWatchUnregisteredDeviceError = Schema.is(WatchUnregisteredDeviceError);
+const isFcmClientError = Schema.is(FcmClient.FcmClientError);
+const isTaggedError = Schema.is(Schema.Struct({ _tag: Schema.String }));
 
 const main = Effect.gen(function* () {
   const [credentialsPath, devicePath, connectionPath] = process.argv.slice(2);
@@ -205,11 +207,18 @@ NodeRuntime.runMain(
     Effect.scoped,
     Effect.catchCause((cause) => {
       const failure = Cause.findErrorOption(cause);
+      const diagnostic = Option.isSome(failure)
+        ? isFcmClientError(failure.value)
+          ? failure.value.message
+          : isTaggedError(failure.value)
+            ? failure.value._tag
+            : "Unknown failure"
+        : "Unexpected defect";
       return Effect.fail(
         Option.isSome(failure) && isWatchUnregisteredDeviceError(failure.value)
           ? failure.value
           : new WatchStoppedError({ cause }),
-      );
+      ).pipe(Effect.tapError(() => Effect.logError(`Notification sender: ${diagnostic}`)));
     }),
     // Socket errors can expose credential headers; retain the cause but print only the fixed message.
     Effect.tapError((error) => Effect.logError(error.message)),

@@ -2,7 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -20,7 +20,7 @@ export function idleTimeoutMs(value: string | undefined): number {
 }
 
 export const readDesktopActivity = Effect.gen(function* () {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (platform !== "win32") return null;
   return yield* Effect.tryPromise(() =>
     execute(
