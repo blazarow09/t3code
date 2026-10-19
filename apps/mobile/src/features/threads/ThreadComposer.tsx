@@ -34,7 +34,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
-import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type RefObject } from "react";
 import { Keyboard, Platform, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
@@ -620,7 +620,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       thread: props.selectedThread,
       settings: props.serverConfig?.settings,
       available: props.connectionState === "connected",
-      draftEmpty: props.draftMessage.length === 0 && props.draftAttachments.length === 0,
+      draftEmpty: draftMessage.length === 0 && draftAttachments.length === 0,
       blocked:
         props.activeThreadBusy ||
         props.queueCount > 0 ||

@@ -6,7 +6,7 @@ import {
 } from "@t3tools/shared/promptSuggestions";
 import { useState } from "react";
 import { Pressable } from "react-native";
-import { AppText as Text } from "../../../components/AppText";
+import { AppText as Text } from "../../../components/ui/AppText";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
 

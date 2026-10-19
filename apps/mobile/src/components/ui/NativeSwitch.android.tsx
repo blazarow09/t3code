@@ -8,6 +8,9 @@ import { useControlTheme } from "./useControlTheme";
 /** RN Pressable must own touch: Compose-handled switch taps can activate the parent row instead. */
 export function NativeSwitch(props: ThemedSwitchProps) {
   const { colors } = useControlTheme();
+  const toggle = () => {
+    if (!props.disabled) props.onValueChange?.(!props.value);
+  };
 
   return (
     <Pressable
