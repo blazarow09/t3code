@@ -107,7 +107,7 @@ import {
 } from "../../composerDraftStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerPinnedSkills } from "./ComposerPinnedSkills";
-import { useUpdateClientSettings } from "~/hooks/useSettings";
+import { updateClientSettings } from "~/hooks/useSettings";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
