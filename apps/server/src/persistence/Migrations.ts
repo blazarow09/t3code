@@ -229,6 +229,8 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
         WHERE (migration_id IN (54, 55, 59, 61) AND name = 'ProjectionProjectAdditionalDirectories')
            OR (migration_id IN (56, 60, 62) AND name = 'RepairProjectionThreadsAutoSettleDisabledAt')
            OR (migration_id = 63 AND name = 'PromptSuggestionUsage')
+           OR (migration_id = 63 AND name = 'DropUnusedV1Projections')
+           OR (migration_id = 64 AND name = 'CanonicalizeThreadPullRequestLinks')
       `);
     }
   }

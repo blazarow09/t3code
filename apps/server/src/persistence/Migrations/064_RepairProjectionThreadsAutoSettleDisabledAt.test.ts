@@ -24,6 +24,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
             { migration_id: 64, name: "RepairProjectionThreadsAutoSettleDisabledAt" },
             { migration_id: 65, name: "PromptSuggestionUsage" },
             { migration_id: 66, name: "DropUnusedV1Projections" },
+            { migration_id: 67, name: "CanonicalizeThreadPullRequestLinks" },
           ],
         );
         assert.deepEqual(
@@ -99,6 +100,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
             { migration_id: 64, name: "RepairProjectionThreadsAutoSettleDisabledAt" },
             { migration_id: 65, name: "PromptSuggestionUsage" },
             { migration_id: 66, name: "DropUnusedV1Projections" },
+            { migration_id: 67, name: "CanonicalizeThreadPullRequestLinks" },
           ],
         );
         assert.deepEqual(yield* runMigrations(), []);
