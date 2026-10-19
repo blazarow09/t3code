@@ -30,6 +30,7 @@ import type {
   RuntimeRequestId,
   ScopedThreadRef,
   ServerProvider,
+  ServerProviderSkill,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -105,6 +106,8 @@ import {
   useComposerThreadDraft,
 } from "../../composerDraftStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
+import { ComposerPinnedSkills } from "./ComposerPinnedSkills";
+import { useUpdateClientSettings } from "~/hooks/useSettings";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
@@ -2385,6 +2388,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     expandMobileComposer: expandMobileComposerStable,
   });
   const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
+  const updateClientSettings = useUpdateClientSettings();
+  const pinnedSkillNames = new Set(settings.pinnedSkills);
+  const pinnedSkills = selectedProviderSkills.filter((skill) => pinnedSkillNames.has(skill.name));
+  const toggleSkillPin = (skill: ServerProviderSkill) => {
+    updateClientSettings({
+      pinnedSkills: pinnedSkillNames.has(skill.name)
+        ? settings.pinnedSkills.filter((name) => name !== skill.name)
+        : [...settings.pinnedSkills, skill.name],
+    });
+  };
+  const toggleSkillPinStable = useStableCallback(toggleSkillPin);
+  const applyPinnedSkill = (skill: ServerProviderSkill) => {
+    const current = promptRef.current;
+    const token = `$${skill.name}`;
+    const alreadyApplied = current.split(/\s+/).includes(token);
+    if (!alreadyApplied) {
+      applyPromptReplacement(0, 0, `${token} `, {
+        expandedCursorAfterReplace: current.length + token.length + 1,
+      });
+      return;
+    }
+    composerEditorRef.current?.focusAt(
+      collapseExpandedComposerCursor(current, current.length, isLiteralPendingAnswer),
+    );
+  };
+  const applyPinnedSkillStable = useStableCallback(applyPinnedSkill);
   const hasImageAttachmentAttention = standaloneComposerImages.some((image) => {
     const upload = uploadsByImageId[image.id];
     const failedInCurrentEnvironment =
@@ -3543,6 +3572,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         />
       </ComposerBanner.Dock>
       <div className="relative">
+        {!isComposerApprovalState && !isComposerCollapsedMobile && pinnedSkills.length > 0 ? (
+          // Straddles the composer's top edge so it stays out of the prompt area.
+          <div className="absolute -top-3 left-5 z-10">
+            <ComposerPinnedSkills
+              skills={pinnedSkills}
+              disabled={
+                isConnecting ||
+                projectSelectionRequired ||
+                isChoiceOnlyPendingQuestion ||
+                activePendingIsResponding
+              }
+              onApply={applyPinnedSkillStable}
+            />
+          </div>
+        ) : null}
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           data-inline-resting-controls={restingControlsHost === null ? "true" : undefined}
@@ -3669,6 +3713,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeItemId={activeComposerMenuItem?.id ?? null}
                     onHighlightedItemChange={onComposerMenuItemHighlightedStable}
                     onSelect={onSelectComposerItemStable}
+                    pinnedSkillNames={pinnedSkillNames}
+                    onToggleSkillPin={toggleSkillPinStable}
                   />
                 </ComposerCommandMenuLayer>
               )}

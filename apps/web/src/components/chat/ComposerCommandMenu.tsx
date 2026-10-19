@@ -19,6 +19,7 @@ import {
   FolderIcon,
   MessagesSquareIcon,
   PackageIcon,
+  PinIcon,
   SettingsIcon,
   UserRoundIcon,
   type LucideIcon,
@@ -28,6 +29,7 @@ import { memo, useLayoutEffect, useRef } from "react";
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -100,6 +102,8 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   activeItemId: string | null;
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
+  pinnedSkillNames: ReadonlySet<string>;
+  onToggleSkillPin: (skill: ServerProviderSkill) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -144,6 +148,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   isActive={props.activeItemId === item.id}
                   onHighlight={props.onHighlightedItemChange}
                   onSelect={props.onSelect}
+                  skillPinned={
+                    item.type === "skill" ? props.pinnedSkillNames.has(item.skill.name) : false
+                  }
+                  onToggleSkillPin={props.onToggleSkillPin}
                 />
               ))}
             </CommandGroup>
@@ -179,6 +187,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   isActive: boolean;
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
+  skillPinned: boolean;
+  onToggleSkillPin: (skill: ServerProviderSkill) => void;
 }) {
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
@@ -189,6 +199,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 
   return (
     <CommandItem
+      className="group/composer-item"
       render={<div id={props.optionId} />}
       aria-selected={props.isActive}
       value={props.item.id}
@@ -248,6 +259,14 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             showSkillSuffix={props.triggerKind === "skill"}
           />
         ) : null}
+        {props.item.type === "skill" ? (
+          <SkillPinToggle
+            skill={props.item.skill}
+            pinned={props.skillPinned}
+            visible={props.isActive}
+            onToggle={props.onToggleSkillPin}
+          />
+        ) : null}
       </span>
     </CommandItem>
   );
@@ -291,5 +310,35 @@ function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffi
       {SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
       {props.showSkillSuffix ? " Skill" : null}
     </Badge>
+  );
+}
+
+function SkillPinToggle(props: {
+  skill: ServerProviderSkill;
+  pinned: boolean;
+  visible: boolean;
+  onToggle: (skill: ServerProviderSkill) => void;
+}) {
+  return (
+    <Button
+      variant="ghost-muted"
+      size="icon-micro"
+      className={cn(
+        !props.pinned && !props.visible && "invisible group-hover/composer-item:visible",
+      )}
+      aria-label={
+        props.pinned ? `Unpin skill ${props.skill.name}` : `Pin skill ${props.skill.name}`
+      }
+      aria-pressed={props.pinned}
+      title={props.pinned ? "Unpin from composer" : "Pin above composer"}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={(event) => {
+        // The row itself inserts the skill; pinning must not also select it.
+        event.stopPropagation();
+        props.onToggle(props.skill);
+      }}
+    >
+      <PinIcon className={cn(props.pinned && "fill-current text-foreground")} />
+    </Button>
   );
 }
