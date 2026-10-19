@@ -1781,7 +1781,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.equal(config.appId, "com.t3tools.t3code.custom");
       assert.equal(config.productName, "T3 Code (Custom)");
-      assert.notProperty(config, "publish");
+      assert.isNull(config.publish);
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(
