@@ -86,6 +86,29 @@ const screenshotItem = {
   updatedAt: DateTime.makeUnsafe("2026-10-05T00:00:01.000Z"),
 };
 
+const mcpAppScreenshotItem = {
+  ...screenshotItem,
+  id: TurnItemId.make("mcp-app-screenshot"),
+  toolName: "blender.look",
+  output: {
+    t3McpApp: {
+      attachmentId: "capture",
+      server: "blender",
+      tool: "look",
+      resourceUri: "ui://viewport",
+    },
+    result: {
+      content: [
+        {
+          type: "image",
+          mimeType: "image/png",
+          data: Buffer.from(screenshotPng).toString("base64"),
+        },
+      ],
+    },
+  },
+};
+
 const oversizedScreenshotItem = {
   ...screenshotItem,
   id: TurnItemId.make("tool-screenshot-oversized"),
@@ -104,11 +127,13 @@ const layerTest = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({
     getTurnItem: ({ itemId }) =>
       Effect.succeed(
-        itemId === screenshotItem.id
-          ? screenshotItem
-          : itemId === oversizedScreenshotItem.id
-            ? oversizedScreenshotItem
-            : null,
+        itemId === mcpAppScreenshotItem.id
+          ? mcpAppScreenshotItem
+          : itemId === screenshotItem.id
+            ? screenshotItem
+            : itemId === oversizedScreenshotItem.id
+              ? oversizedScreenshotItem
+              : null,
       ),
   }),
   layerConfig,
@@ -1464,3 +1489,23 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 });
+
+it.effect("serves a persisted MCP app capture through its signed image asset", () =>
+  Effect.gen(function* () {
+    const result = yield* issueAssetUrl({
+      resource: {
+        _tag: "tool-output-image",
+        threadId: mcpAppScreenshotItem.threadId,
+        itemId: mcpAppScreenshotItem.id,
+        index: 0,
+      },
+    });
+    const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+    const separator = suffix.indexOf("/");
+    expect(yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1))).toEqual({
+      kind: "bytes",
+      mimeType: "image/png",
+      bytes: Buffer.from(screenshotPng),
+    });
+  }).pipe(Effect.provide(layerTest)),
+);

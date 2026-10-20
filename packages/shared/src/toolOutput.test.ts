@@ -199,3 +199,28 @@ describe("toolOutputImages", () => {
     expect(images).toHaveLength(MAX_TOOL_OUTPUT_IMAGES);
   });
 });
+
+describe("MCP app images", () => {
+  it("indexes wrapped captures and omits only their bytes from detail projections", () => {
+    const reference = {
+      attachmentId: "capture",
+      server: "blender",
+      tool: "look",
+      resourceUri: "ui://viewport",
+    };
+    const result = {
+      _meta: { sequence: 28 },
+      content: [
+        { type: "text", text: "Viewport" },
+        { type: "image", mimeType: "image/png", data: "AQID" },
+      ],
+    };
+    const output = { t3McpApp: reference, result };
+    expect(toolOutputImages(output)).toEqual([{ mimeType: "image/png", data: "AQID" }]);
+    expect(omitToolOutputImageData(output)).toEqual({
+      t3McpApp: reference,
+      result: { ...result, content: [result.content[0], { type: "image", mimeType: "image/png" }] },
+    });
+    expect(toolOutputImages({ result })).toEqual([]);
+  });
+});

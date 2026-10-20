@@ -377,3 +377,32 @@ describe("live body deduper", () => {
     expect([first, message(2, "a")].map(makeLiveBodyDeduper())[0]).toBe(first);
   });
 });
+
+it("keeps MCP app captures out of the wire while retaining their image asset markers", () => {
+  const reference = {
+    attachmentId: "capture",
+    server: "blender",
+    tool: "look",
+    resourceUri: "ui://viewport",
+  };
+  const item = {
+    ...base,
+    toolName: "blender.look",
+    output: {
+      t3McpApp: reference,
+      result: {
+        _meta: { sequence: 28 },
+        content: [{ type: "image", mimeType: "image/png", data: "A".repeat(800_000) }],
+      },
+    },
+  };
+  expect(projectTurnItemForDetail(item)).toMatchObject({
+    output: {
+      t3McpApp: reference,
+      result: { _meta: { sequence: 28 }, content: [{ type: "image", mimeType: "image/png" }] },
+    },
+  });
+  expect(JSON.stringify(projectTurnItemForDetail(item))).not.toContain("AAAA");
+  expect(projectTurnItemForWire(item)).toMatchObject({ output: { t3McpApp: reference } });
+  expect(JSON.stringify(projectTurnItemForWire(item))).not.toContain("AAAA");
+});

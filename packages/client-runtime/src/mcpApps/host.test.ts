@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeMcpAppHost, McpAppHostRefusal, type McpAppHostContext } from "./host.ts";
+import {
+  hydrateMcpAppToolResult,
+  makeMcpAppHost,
+  McpAppHostRefusal,
+  type McpAppHostContext,
+} from "./host.ts";
 
 const app = {
   attachmentId: "thread-1-app",
@@ -278,12 +283,15 @@ describe("makeMcpAppHost", () => {
       method: "ui/request-display-mode",
       params: { mode: "pip" },
     });
-    host.receive({
-      jsonrpc: "2.0",
-      id: 2,
-      method: "ui/request-display-mode",
-      params: { mode: "fullscreen" },
-    });
+    host.receive(
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "ui/request-display-mode",
+        params: { mode: "fullscreen" },
+      },
+      true,
+    );
     await flush();
     host.updateHostContext();
     expect(sent.find((m) => m.id === 1)?.result).toEqual({ mode: "inline" });
@@ -302,6 +310,32 @@ describe("makeMcpAppHost", () => {
     });
     await flush();
     expect(declined.sent.find((m) => m.id === 3)?.result).toEqual({ mode: "inline" });
+  });
+
+  it("keeps reopened apps inline until user activation, and always allows exiting fullscreen", async () => {
+    for (let opening = 0; opening < 2; opening++) {
+      const { host, sent } = setup();
+      initialize(host, { availableDisplayModes: ["inline", "fullscreen"] });
+      const request = (id: number, mode: string) => ({
+        jsonrpc: "2.0",
+        id,
+        method: "ui/request-display-mode",
+        params: { mode, userActivation: true },
+      });
+      host.receive(request(1, "fullscreen"));
+      await flush();
+      expect(sent.find((m) => m.id === 1)?.result).toEqual({ mode: "inline" });
+      host.receive(request(2, "fullscreen"), true);
+      await flush();
+      expect(sent.find((m) => m.id === 2)?.result).toEqual({ mode: "fullscreen" });
+      host.receive(request(3, "inline"));
+      await flush();
+      expect(sent.find((m) => m.id === 3)?.result).toEqual({ mode: "inline" });
+      host.receive(request(4, "fullscreen"), false);
+      await flush();
+      expect(sent.find((m) => m.id === 4)?.result).toEqual({ mode: "inline" });
+      host.dispose();
+    }
   });
 
   it("forwards model context and download requests, and declares both", async () => {
@@ -361,5 +395,50 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 2)?.result).toEqual({});
     expect(sent.find((m) => m.id === 3)?.result).toEqual({ isError: true });
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
+  });
+});
+
+describe("saved MCP app images", () => {
+  it("hydrates asset indexes without losing text, metadata, or embedded images", async () => {
+    const load = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    const result = {
+      _meta: { sequence: 28 },
+      structuredContent: { scene: "Scene" },
+      content: [
+        { type: "text", text: "Viewport" },
+        { type: "image", mimeType: "image/png", data: "BAUG" },
+        { type: "image", mimeType: "image/png" },
+      ],
+    };
+    const hydrated = await hydrateMcpAppToolResult(result, load);
+    expect(load).toHaveBeenCalledExactlyOnceWith(1);
+    expect(hydrated).toEqual({
+      ...result,
+      content: [
+        result.content[0],
+        result.content[1],
+        { type: "image", mimeType: "image/png", data: "AQID" },
+      ],
+    });
+    expect(result.content[2]).not.toHaveProperty("data");
+  });
+
+  it("replaces missing historical images with an explanation and keeps available captures", async () => {
+    const result = await hydrateMcpAppToolResult(
+      {
+        content: [
+          { type: "image", mimeType: "image/png" },
+          { type: "image", mimeType: "image/png" },
+        ],
+      },
+      async (index) => {
+        if (index === 0) throw new Error("Not found");
+        return new Uint8Array([1]);
+      },
+    );
+    expect(result.content).toEqual([
+      { type: "text", text: expect.stringContaining("Capture a new preview") },
+      { type: "image", mimeType: "image/png", data: "AQ==" },
+    ]);
   });
 });

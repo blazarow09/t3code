@@ -228,6 +228,14 @@ export function readToolOutputImage(block: unknown): ToolOutputImage | null {
 }
 
 function outputBlocks(value: unknown): ReadonlyArray<unknown> {
+  if (
+    Predicate.isObject(value) &&
+    readMcpAppReference(value[MCP_APP_OUTPUT_KEY]) !== undefined &&
+    Predicate.isObject(value.result) &&
+    Array.isArray(value.result.content)
+  ) {
+    return value.result.content;
+  }
   if (Array.isArray(value)) return value;
   if (Predicate.isObject(value) && Array.isArray(value.content)) return value.content;
   return [value];
@@ -254,13 +262,29 @@ export function toolOutputImages(value: unknown): ReadonlyArray<ToolOutputImage>
 }
 
 export function omitToolOutputImageData(value: unknown): unknown {
-  const omit = (block: unknown) => {
-    const image = readToolOutputImage(block);
-    return image?.data === undefined ? block : { type: "image", mimeType: image.mimeType };
-  };
-  if (Array.isArray(value)) return value.map(omit);
-  if (Predicate.isObject(value) && Array.isArray(value.content)) {
-    return { ...value, content: value.content.map(omit) };
+  if (
+    Predicate.isObject(value) &&
+    readMcpAppReference(value[MCP_APP_OUTPUT_KEY]) !== undefined &&
+    Predicate.isObject(value.result) &&
+    Array.isArray(value.result.content)
+  ) {
+    return {
+      ...value,
+      result: { ...value.result, content: value.result.content.map(omitImageData) },
+    };
   }
-  return omit(value);
+  return omitImageContent(value);
+}
+
+function omitImageData(block: unknown): unknown {
+  const image = readToolOutputImage(block);
+  return image?.data === undefined ? block : { type: "image", mimeType: image.mimeType };
+}
+
+function omitImageContent(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(omitImageData);
+  if (Predicate.isObject(value) && Array.isArray(value.content)) {
+    return { ...value, content: value.content.map(omitImageData) };
+  }
+  return omitImageData(value);
 }

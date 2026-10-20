@@ -1,6 +1,7 @@
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   makeMcpAppHost,
+  hydrateMcpAppToolResult,
   McpAppHostRefusal,
   mcpAppStyleVariables,
   mcpResourceBytes,
@@ -9,6 +10,7 @@ import {
   type McpAppHost,
   type McpAppHostContext,
 } from "@t3tools/client-runtime/mcp-apps";
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   clampMcpAppHeight,
@@ -23,6 +25,8 @@ import { useEffect, useRef, useState, type FocusEvent, type ToggleEvent } from "
 import { flushSync } from "react-dom";
 
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
+import { assetEnvironment } from "~/state/assets";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { APP_VERSION } from "~/branding";
 import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
@@ -151,6 +155,12 @@ export function McpAppFrame(props: {
             | undefined,
         }
       : undefined;
+
+  const createImageUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  const createImageUrlRef = useRef(createImageUrl);
+  useEffect(() => {
+    createImageUrlRef.current = createImageUrl;
+  }, [createImageUrl]);
 
   const callTool = useAtomCommand(mcpAppEnvironment.callTool, { reportFailure: false });
   const toolInfo = useAtomCommand(mcpAppEnvironment.toolInfo, { reportFailure: false });
@@ -388,7 +398,13 @@ export function McpAppFrame(props: {
     });
     hostRef.current = host;
     const receive = (event: MessageEvent) => {
-      if (event.source !== null && event.source === target()) host.receive(event.data);
+      if (event.source !== null && event.source === target()) {
+        host.receive(
+          event.data,
+          document.activeElement === frameRef.current &&
+            navigator.userActivation?.isActive === true,
+        );
+      }
     };
     window.addEventListener("message", receive);
     return () => {
@@ -407,9 +423,46 @@ export function McpAppFrame(props: {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends the current tool call to the MCP app host, again for each new iframe document
   useEffect(() => {
-    if (toolCall !== undefined) hostRef.current?.setToolCall(toolCall);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new document needs the call.
-  }, [toolCall, src, documentGeneration]);
+    const host = hostRef.current;
+    if (toolCall === undefined || host === null || src === null) return;
+    const controller = new AbortController();
+    const deliver = async () => {
+      const result =
+        toolCall.result === undefined
+          ? undefined
+          : await hydrateMcpAppToolResult(toolCall.result, async (index) => {
+              const signed = await createImageUrlRef.current({
+                environmentId: props.environmentId,
+                input: {
+                  resource: {
+                    _tag: "tool-output-image",
+                    threadId: props.threadId,
+                    itemId: props.itemId,
+                    index,
+                  },
+                },
+              });
+              if (signed._tag !== "Success") throw new Error("Image unavailable");
+              const imageUrl = resolveAssetUrl(src, signed.value.relativeUrl);
+              if (imageUrl === null) throw new Error("Image URL unavailable");
+              const response = await fetch(imageUrl, { signal: controller.signal });
+              if (!response.ok) throw new Error("Image download failed");
+              return new Uint8Array(await response.arrayBuffer());
+            });
+      if (!controller.signal.aborted) host.setToolCall({ ...toolCall, result });
+    };
+    void deliver();
+    return () => controller.abort();
+  }, [
+    toolCall,
+    src,
+    documentGeneration,
+    closed,
+    props.environmentId,
+    props.threadId,
+    props.itemId,
+  ]);
+  // oxlint-enable react/exhaustive-effect-dependencies
 
   if (closed) {
     return (

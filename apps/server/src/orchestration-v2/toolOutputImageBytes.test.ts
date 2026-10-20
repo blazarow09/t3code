@@ -213,3 +213,21 @@ describe("stripUnservedToolOutputImageBytes", () => {
     expect(stripped.result[0]).toBe(untouched);
   });
 });
+
+it("preserves captured MCP app images for authenticated asset downloads", () => {
+  const output = {
+    t3McpApp: {
+      attachmentId: "capture",
+      server: "blender",
+      tool: "look",
+      resourceUri: "ui://viewport",
+    },
+    result: {
+      _meta: { sequence: 28 },
+      content: [{ type: "image", mimeType: "image/png", data: PNG_BASE64 }],
+    },
+  };
+  const stored = outputOf(stripUnservedToolOutputImageBytes(toolItem(output, "blender.look")));
+  expect(stored).toEqual(output);
+  expect(toolOutputImages(stored)[0]?.data).toBe(PNG_BASE64);
+});

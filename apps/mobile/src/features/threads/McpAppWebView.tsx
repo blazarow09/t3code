@@ -4,6 +4,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   makeMcpAppHost,
+  hydrateMcpAppToolResult,
   McpAppHostRefusal,
   mcpAppStyleVariables,
   mcpResourceBytes,
@@ -12,6 +13,7 @@ import {
   type McpAppHostContext,
 } from "@t3tools/client-runtime/mcp-apps";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { CommandId, MessageId } from "@t3tools/contracts";
 import {
@@ -34,7 +36,8 @@ import { shareGeneratedAttachment } from "../../lib/attachmentDownload";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { uuidv4 } from "../../lib/uuid";
-import { useAssetUrlState } from "../../state/assets";
+import { assetEnvironment, useAssetUrlState } from "../../state/assets";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useThreadShell } from "../../state/entities";
 import { mcpAppEnvironment } from "../../state/mcpApps";
@@ -200,6 +203,12 @@ export function ThreadMcpApp(props: {
     }),
   );
   const toolDefinition = toolInfo.data?.tool;
+
+  const createImageUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  const createImageUrlRef = useRef(createImageUrl);
+  useEffect(() => {
+    createImageUrlRef.current = createImageUrl;
+  }, [createImageUrl]);
 
   const callTool = useAtomCommand(mcpAppEnvironment.callTool, { reportFailure: false });
   const toolInfoCommand = useAtomCommand(mcpAppEnvironment.toolInfo, { reportFailure: false });

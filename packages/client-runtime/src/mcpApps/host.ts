@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off - The bridge runs in the client, outside an Effect runtime.
 import { MCP_APP_PROTOCOL_VERSION, type McpAppReference } from "@t3tools/shared/mcpApp";
+import { MAX_TOOL_OUTPUT_IMAGES, readToolOutputImage } from "@t3tools/shared/toolOutput";
 import * as Base64 from "effect/encoding/Base64";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
@@ -71,6 +72,35 @@ export interface McpAppCallToolResult {
   readonly _meta?: unknown;
 }
 
+/** Detail projections omit image bytes; apps still expect MCP base64 content blocks. */
+export async function hydrateMcpAppToolResult(
+  result: McpAppCallToolResult,
+  loadImage: (index: number) => Promise<Uint8Array>,
+): Promise<McpAppCallToolResult> {
+  let imageIndex = 0;
+  const content = await Promise.all(
+    result.content.map(async (block) => {
+      const image = readToolOutputImage(block);
+      if (image === null) return block;
+      const index = imageIndex++;
+      if (image.data !== undefined) return block;
+      if (index < MAX_TOOL_OUTPUT_IMAGES) {
+        try {
+          const bytes = await loadImage(index);
+          return { type: "image", mimeType: image.mimeType, data: Base64.encode(bytes) };
+        } catch {
+          // Older captures may have lost their bytes before image persistence was supported.
+        }
+      }
+      return {
+        type: "text",
+        text: "This saved image is unavailable. Capture a new preview to view it.",
+      };
+    }),
+  );
+  return { ...result, content };
+}
+
 export class McpAppHostRefusal extends Error {}
 
 export interface McpAppHostOptions {
@@ -98,8 +128,8 @@ export interface McpAppHostOptions {
 }
 
 export interface McpAppHost {
-  /** Handles one message the app posted; the caller has already checked its source. */
-  readonly receive: (data: unknown) => void;
+  /** The caller checks the source and supplies browser-observed activation, never an app claim. */
+  readonly receive: (data: unknown, hasUserActivation?: boolean) => void;
   readonly setToolCall: (call: {
     readonly arguments: unknown;
     readonly result: McpAppCallToolResult | undefined;
@@ -197,7 +227,12 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
     );
   };
 
-  const handleRequest = (id: JsonRpcId, method: string, params: Record<PropertyKey, unknown>) => {
+  const handleRequest = (
+    id: JsonRpcId,
+    method: string,
+    params: Record<PropertyKey, unknown>,
+    hasUserActivation: boolean,
+  ) => {
     switch (method) {
       case "ui/initialize": {
         const requested = params.protocolVersion;
@@ -295,7 +330,9 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           typeof mode === "string" &&
           options.hostContext().availableDisplayModes.includes(mode as McpAppDisplayMode) &&
           (appDisplayModes === undefined || appDisplayModes.includes(mode));
-        if (!allowed || mode === current) {
+        // Captured apps initialize again when a chat opens; startup requests
+        // must not take over the screen without interaction in that app.
+        if (!allowed || mode === current || (mode === "fullscreen" && !hasUserActivation)) {
           respond(id, { mode: current });
           return;
         }
@@ -387,7 +424,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   };
 
   const hostHandle: McpAppHost = {
-    receive: (data) => {
+    receive: (data, hasUserActivation = false) => {
       if (disposed || !Predicate.isObject(data) || data.jsonrpc !== "2.0") return;
       if (jsonBytes(data) > MAX_MESSAGE_BYTES) {
         if (isId(data.id) && typeof data.method === "string") {
@@ -401,7 +438,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         return;
       }
       const params = Predicate.isObject(data.params) ? data.params : {};
-      if (isId(data.id)) handleRequest(data.id, method, params);
+      if (isId(data.id)) handleRequest(data.id, method, params, hasUserActivation);
       else handleNotification(method, params);
     },
     setToolCall: (call) => {
