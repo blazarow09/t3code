@@ -10,6 +10,10 @@ export const makeProcessProbe = Effect.gen(function* () {
   const sockets = new Set<NodeNet.Socket>();
   const server = NodeNet.createServer((socket) => {
     sockets.add(socket);
+    // Windows reports a reset when the fixture is forcefully terminated.
+    socket.on("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") throw error;
+    });
     let output = "";
     socket.on("data", (chunk) => {
       output += chunk.toString();
