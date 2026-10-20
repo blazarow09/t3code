@@ -1492,7 +1492,11 @@ export const layerWithOptions = (
       );
 
       const scheduleThreadUnload = Effect.fn("ProviderSessionManager.scheduleThreadUnload")(
-        function* (providerSessionId: ProviderSessionId, providerThreadId: ProviderThreadId, resetTransport = false) {
+        function* (
+          providerSessionId: ProviderSessionId,
+          providerThreadId: ProviderThreadId,
+          resetTransport = false,
+        ): Effect.fn.Return<void> {
           const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
           if (entry === undefined || hasBusyTurn(entry, providerThreadId)) return;
           const tracked = Array.from(entry.idleThreadUnloads).find(

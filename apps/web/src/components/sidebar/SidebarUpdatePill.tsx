@@ -258,15 +258,17 @@ function SidebarUpdateControl() {
   });
   const idleTooltip =
     !showUpdateDetails && !showCheckIcon ? getDesktopUpdateIdleTooltip(state) : null;
-  const tooltip = state?.customSync ? getDesktopUpdateButtonTooltip(state) : runsEverything
-    ? everything.summary
-    : showUpdateDetails
-      ? state
-        ? getDesktopUpdateButtonTooltip(state)
-        : "Update available"
-      : showCheckIcon
-        ? "Checking for updates…"
-        : (idleTooltip?.title ?? "Check for updates");
+  const tooltip = state?.customSync
+    ? getDesktopUpdateButtonTooltip(state)
+    : runsEverything
+      ? everything.summary
+      : showUpdateDetails
+        ? state
+          ? getDesktopUpdateButtonTooltip(state)
+          : "Update available"
+        : showCheckIcon
+          ? "Checking for updates…"
+          : (idleTooltip?.title ?? "Check for updates");
   const disabled = showCheckIcon
     ? true
     : runsEverything

@@ -361,7 +361,13 @@ export const OpenCodeDriver: ProviderDriver<
       { concurrency: "unbounded" },
     ).pipe(
       Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
-      Effect.flatMap((draft) => attachOpenCodeDeepSeekUsageLimits({ draft, environment: processEnv, checkedAt: draft.checkedAt }).pipe(Effect.orElseSucceed(() => draft))),
+      Effect.flatMap((draft) =>
+        attachOpenCodeDeepSeekUsageLimits({
+          draft,
+          environment: processEnv,
+          checkedAt: draft.checkedAt,
+        }).pipe(Effect.orElseSucceed(() => draft)),
+      ),
       Effect.map(stampIdentity),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),

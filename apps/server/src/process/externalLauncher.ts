@@ -668,7 +668,11 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   if (platform === "win32") {
     const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
     const windowsTarget = normalizeWindowsFileManagerPath(target);
-    return fileExplorerHelperLaunch(target, resolvePowerShellPath(env), buildFileManagerRevealPowerShellSource(windowsTarget, path.dirname(windowsTarget)));
+    return fileExplorerHelperLaunch(
+      target,
+      resolvePowerShellPath(env),
+      buildFileManagerRevealPowerShellSource(windowsTarget, path.dirname(windowsTarget)),
+    );
   }
 
   if (

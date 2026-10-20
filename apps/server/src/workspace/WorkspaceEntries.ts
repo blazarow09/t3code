@@ -178,20 +178,19 @@ export const make = Effect.gen(function* () {
         yield* workspaceSearchIndexes.invalidate(indexKey);
         continue;
       }
-      const recoverRefreshFailure = (
+      const recoverRefreshFailure = Effect.fn("WorkspaceEntries.recoverRefreshFailure")(function* (
         cause:
           | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
           | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
           | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
-      ) =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning("Failed to refresh workspace search index", {
-            cwd,
-            variant,
-            cause,
-          });
-          yield* workspaceSearchIndexes.invalidate(indexKey);
+      ) {
+        yield* Effect.logWarning("Failed to refresh workspace search index", {
+          cwd,
+          variant,
+          cause,
         });
+        yield* workspaceSearchIndexes.invalidate(indexKey);
+      });
       yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         yield* searchIndex.refresh();

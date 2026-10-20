@@ -1,9 +1,9 @@
-import { useAtomValue } from "@effect/atom-react";
 import { ExpandedImageDialog } from "./ExpandedImageDialog";
 import { expandedImageKey, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { AgentsPanel } from "../AgentsPanel";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { deriveAgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
+import { useAtomValue } from "@effect/atom-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -414,6 +414,9 @@ export function ThreadRelationshipsPanel(props: {
     (agent): agent is OrchestrationV2Subagent & { remoteChild: OrchestrationV2RemoteTaskChild } =>
       agent.remoteChild !== undefined,
   );
+  const agentPanelModel = deriveAgentPanelModel({
+    agents: projectedSubagentsToRuntime(projection?.subagents ?? []),
+  });
   const runningCount =
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
@@ -423,9 +426,6 @@ export function ThreadRelationshipsPanel(props: {
     return null;
   }
 
-  const agentPanelModel = deriveAgentPanelModel({
-    agents: projectedSubagentsToRuntime(projection?.subagents ?? []),
-  });
   const openThread = (threadId: ThreadId) => {
     void navigate({
       to: "/$environmentId/$threadId",

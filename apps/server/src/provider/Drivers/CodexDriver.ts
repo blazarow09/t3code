@@ -136,9 +136,19 @@ export const CodexDriver: ProviderDriver<
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
     const instanceEnvironment = yield* mergeProviderInstanceEnvironment(environment);
     const homeLayout = yield* resolveCodexHomeLayout(config);
-    const processEnv = homeLayout.mode === "authOverlay" ? { ...instanceEnvironment, CODEX_SQLITE_HOME: homeLayout.effectiveHomePath } : instanceEnvironment;
-    if (homeLayout.mode === "authOverlay" && /\bsqlite_home\b/iu.test(resolveCodexLaunchArgs(config.launchArgs, processEnv))) {
-      return yield* new ProviderDriverError({ driver: DRIVER_KIND, instanceId, detail: "A Codex shadow home cannot use a sqlite_home launch override." });
+    const processEnv =
+      homeLayout.mode === "authOverlay"
+        ? { ...instanceEnvironment, CODEX_SQLITE_HOME: homeLayout.effectiveHomePath }
+        : instanceEnvironment;
+    if (
+      homeLayout.mode === "authOverlay" &&
+      /\bsqlite_home\b/iu.test(resolveCodexLaunchArgs(config.launchArgs, processEnv))
+    ) {
+      return yield* new ProviderDriverError({
+        driver: DRIVER_KIND,
+        instanceId,
+        detail: "A Codex shadow home cannot use a sqlite_home launch override.",
+      });
     }
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     const stampIdentity = withInstanceIdentity({

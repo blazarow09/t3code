@@ -86,6 +86,7 @@ import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
+import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
 import { TimelineMinimap } from "./TimelineMinimap";
@@ -355,6 +356,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   renderHtmlRender,
   turnItemSource,
   parentThreadLink = null,
+  workflowOpening = null,
   onForkFromRun,
   supportsConversationRollback,
   threadStartCheckpointReady = false,
@@ -587,9 +589,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runlessWorkActive,
       })
     : null;
-  const activeFindRunId = activeFindMatch
-    ? findFoldRunIds?.get(activeFindMatch.entryId)
-    : undefined;
+  const activeFindRunId =
+    findActive && activeFindMatch ? findFoldRunIds?.get(activeFindMatch.entryId) : undefined;
   const [expandedFindRunId, setExpandedFindRunId] = useState<RunId | undefined>();
   if (expandedFindRunId !== activeFindRunId) {
     setExpandedFindRunId(activeFindRunId);
@@ -1441,7 +1442,9 @@ function keyExtractor(item: MessagesTimelineRow) {
 
 // LegendList averages by type; length buckets prevent inflated estimates and nested-update loops.
 function getItemType(item: MessagesTimelineRow) {
-  return item.kind === "message" ? `message:${item.message.role}` : item.kind;
+  if (item.kind !== "message") return item.kind;
+  const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
+  return `message:${item.message.role}:${lengthBucket}`;
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
@@ -1512,7 +1515,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
+      {row.kind === "message" && row.message.role === "user" ? <UserMessageRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
@@ -1593,18 +1596,8 @@ function ContextCompactionTimelineRow({
         ref={row.active ? observeVisibleAnimation : undefined}
         className="relative min-w-0 overflow-hidden"
       >
-        <span className="flex items-center gap-1.5">
-          <Minimize2Icon aria-hidden="true" className="size-3" />
-          {row.label}
-        </span>
-        {row.active ? (
-          <ActivityShimmerOverlay>
-            <span className="flex items-center gap-1.5">
-              <Minimize2Icon aria-hidden="true" className="size-3" />
-              {row.label}
-            </span>
-          </ActivityShimmerOverlay>
-        ) : null}
+        {content}
+        {row.active ? <ActivityShimmerOverlay>{content}</ActivityShimmerOverlay> : null}
       </span>
       <span className={cn("h-px flex-1", row.failed ? "bg-destructive/30" : "bg-border/70")} />
     </div>
