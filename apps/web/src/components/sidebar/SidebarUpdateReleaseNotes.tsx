@@ -2,6 +2,7 @@ import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { ExternalLinkIcon } from "lucide-react";
 
 import {
+  getDesktopUpdateButtonTooltip,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
 } from "../desktopUpdate.logic";
@@ -52,7 +53,6 @@ function CustomSyncSummary({
   readonly state: DesktopUpdateState;
   readonly syncPending: boolean;
 }) {
-  const behind = state.syncBehind ?? 0;
   const note = state.releaseNotes[0];
   const omitted = state.omittedReleaseCount;
 
@@ -60,9 +60,7 @@ function CustomSyncSummary({
     <div className="flex max-h-[calc(var(--available-height)-0.5rem)] min-h-0 w-fit max-w-[min(24rem,calc(100vw-2rem))] flex-col text-left">
       <div className="shrink-0 px-1">
         <div className="whitespace-nowrap text-sm leading-5 font-medium">
-          {behind > 0
-            ? `Upstream is ${behind} commit${behind === 1 ? "" : "s"} ahead`
-            : "This build matches upstream"}
+          {getDesktopUpdateButtonTooltip(state)}
         </div>
         <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
           For reference. This check does not install anything.
@@ -80,7 +78,7 @@ function CustomSyncSummary({
           {syncPending ? "Starting…" : "Sync and build"}
         </button>
         <div className="mt-1.5 text-xs leading-4 text-muted-foreground">
-          Starts a new chat on GPT-6 Sol (medium). It builds an installer and does not install it.
+          Starts a new chat on GPT-6.1 Sol (medium). It builds an installer and does not install it.
         </div>
       </div>
       {note && note.items.length > 0 ? (

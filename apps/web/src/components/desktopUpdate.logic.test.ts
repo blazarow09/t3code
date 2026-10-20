@@ -89,4 +89,103 @@ describe("canCheckForUpdate", () => {
       }),
     ).toBe(true);
   });
+
+  it("returns true when idle", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "idle" })).toBe(true);
+  });
+
+  it("returns true when up-to-date", () => {
+    expect(canCheckForUpdate({ ...baseState, status: "up-to-date" })).toBe(true);
+  });
+
+  it("returns true when an update is available", () => {
+    expect(
+      canCheckForUpdate({ ...baseState, status: "available", availableVersion: "1.1.0" }),
+    ).toBe(true);
+  });
+
+  it("returns true on error so the user can retry", () => {
+    expect(
+      canCheckForUpdate({
+        ...baseState,
+        status: "error",
+        errorContext: "check",
+        message: "network",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("getDesktopUpdateButtonTooltip", () => {
+  it("does not describe stale counts as current after a failed check", () => {
+    expect(
+      getDesktopUpdateButtonTooltip({
+        ...baseState,
+        customSync: true,
+        syncBehind: 1980,
+        status: "error",
+        message: "Could not compare this installed build with upstream.",
+      }),
+    ).toBe("Could not compare this installed build with upstream.");
+  });
+
+  it("describes upstream drift without offering a download", () => {
+    expect(
+      getDesktopUpdateButtonTooltip({
+        ...baseState,
+        customSync: true,
+        syncBehind: 2,
+        checkedAt: "2026-09-21T00:00:00.000Z",
+      }),
+    ).toBe("Upstream is 2 commits ahead of this build");
+    expect(
+      getDesktopUpdateButtonTooltip({
+        ...baseState,
+        customSync: true,
+        syncBehind: 0,
+        checkedAt: null,
+      }),
+    ).toBe("Check for upstream changes");
+    expect(
+      resolveDesktopUpdateButtonAction({ ...baseState, customSync: true, syncBehind: 4 }),
+    ).toBe("none");
+  });
+
+  it("returns 'Up to date' for non-actionable states", () => {
+    expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "idle" })).toBe("Up to date");
+    expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
+      "Up to date",
+    );
+  });
+});
+
+describe("disabled update reason", () => {
+  const disabledState: DesktopUpdateState = {
+    ...baseState,
+    enabled: false,
+    status: "disabled",
+    message: "Automatic updates are only available in packaged production builds.",
+  };
+
+  it("explains why checking is unavailable", () => {
+    expect(getDesktopUpdateDisabledReason(disabledState)).toBe(
+      "Automatic updates are only available in packaged production builds.",
+    );
+    expect(getDesktopUpdateIdleTooltip(disabledState)).toEqual({
+      title: "Updates unavailable",
+      detail: "Automatic updates are only available in packaged production builds.",
+    });
+    expect(getDesktopUpdateDisabledReason({ ...disabledState, message: null })).toBe(
+      "Automatic updates are not available in this build.",
+    );
+  });
+
+  it("keeps the check prompt when updates are available", () => {
+    expect(getDesktopUpdateDisabledReason(baseState)).toBeNull();
+    expect(getDesktopUpdateDisabledReason(null)).toBeNull();
+    expect(getDesktopUpdateIdleTooltip(baseState)).toEqual({
+      title: "Check for updates",
+      detail: null,
+    });
+  });
 });

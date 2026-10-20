@@ -1,6 +1,16 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
-import { parseCustomSyncCommitLog, selectCustomSyncBase } from "./customSyncStatus.ts";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+
+import {
+  readCustomSyncConfig,
+  parseCustomSyncCommitLog,
+  selectCustomSyncBase,
+} from "./customSyncStatus.ts";
 
 describe("parseCustomSyncCommitLog", () => {
   it("reads a short sha and subject from each log line", () => {
@@ -19,35 +29,73 @@ describe("parseCustomSyncCommitLog", () => {
 
 describe("selectCustomSyncBase", () => {
   const input = {
-    branch: "custom",
-    syncBranch: "custom-sync",
     builtRevision: "25c84e88c6",
     builtRevisionResolves: true,
-    syncBranchResolves: true,
   };
 
   it("counts from the commit the installer was built from", () => {
     expect(selectCustomSyncBase(input)).toBe("25c84e88c6");
   });
 
-  it("uses the unfinalized sync branch when the build stamp is missing", () => {
+  it("reports unknown when the build stamp is missing", () => {
     expect(
       selectCustomSyncBase({
         ...input,
         builtRevision: null,
         builtRevisionResolves: false,
       }),
-    ).toBe("custom-sync");
+    ).toBeNull();
   });
 
-  it("falls back to the finalized branch when neither newer ref exists", () => {
+  it("reports unknown without installed provenance", () => {
     expect(
       selectCustomSyncBase({
         ...input,
-        builtRevision: "missing",
+        builtRevision: null,
         builtRevisionResolves: false,
-        syncBranchResolves: false,
       }),
-    ).toBe("custom");
+    ).toBeNull();
   });
 });
+
+it("does not substitute a moving branch for a missing installed revision", () => {
+  expect(
+    selectCustomSyncBase({
+      builtRevision: "missing",
+      builtRevisionResolves: false,
+    }),
+  ).toBeNull();
+});
+
+it.effect("uses the installed build stamp rather than mutable state or a future build", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-custom-sync-" });
+    const state = path.join(root, "state");
+    const installed = path.join(root, "installed");
+    yield* fs.makeDirectory(state);
+    yield* fs.makeDirectory(installed);
+    yield* fs.writeFileString(
+      path.join(state, "custom-sync.json"),
+      JSON.stringify({ repoPath: "repo", builtRevision: "old-state" }),
+    );
+    yield* fs.writeFileString(
+      path.join(installed, "package.json"),
+      JSON.stringify({ t3codeCommitHash: "installed-head" }),
+    );
+    const legacy = yield* readCustomSyncConfig(state, installed);
+    expect(Option.getOrThrow(legacy).builtRevision).toBe("installed-head");
+    yield* fs.writeFileString(
+      path.join(installed, "custom-sync.json"),
+      JSON.stringify({ repoPath: "repo", builtRevision: "installed-stamp" }),
+    );
+    yield* fs.writeFileString(
+      path.join(state, "custom-sync.json"),
+      JSON.stringify({ repoPath: "repo", builtRevision: "future-build" }),
+    );
+    expect(Option.getOrThrow(yield* readCustomSyncConfig(state, installed)).builtRevision).toBe(
+      "installed-stamp",
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

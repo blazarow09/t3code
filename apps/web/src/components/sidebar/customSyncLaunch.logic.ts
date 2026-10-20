@@ -4,9 +4,9 @@ import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 export const CUSTOM_SYNC_REPO_ROOT = "D:\\Projects\\t3code";
 
 /** Codex model and effort used for custom sync chats. */
-export const CUSTOM_SYNC_MODEL_SLUG = "gpt-6-sol";
+export const CUSTOM_SYNC_MODEL_SLUG = "gpt-6.1-sol";
 
-export const CUSTOM_SYNC_MODEL_LABEL = "GPT-6 Sol (medium)";
+export const CUSTOM_SYNC_MODEL_LABEL = "GPT-6.1 Sol (medium)";
 
 export const CUSTOM_SYNC_MODEL_OPTIONS = [{ id: "reasoningEffort", value: "medium" }] as const;
 

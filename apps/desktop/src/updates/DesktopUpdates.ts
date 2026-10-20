@@ -399,7 +399,7 @@ export const make = Effect.gen(function* () {
   // whole result.
   const refreshCustomSync = (announce: boolean) =>
     Effect.gen(function* () {
-      const config = yield* readCustomSyncConfig(environment.stateDir);
+      const config = yield* readCustomSyncConfig(environment.stateDir, environment.appRoot);
       if (Option.isNone(config)) {
         return false;
       }
@@ -429,7 +429,10 @@ export const make = Effect.gen(function* () {
           customSync: true,
           enabled: true,
           status: "error",
-          message: "Could not read upstream commits.",
+          message: "Could not compare this installed build with upstream.",
+          syncBehind: undefined,
+          releaseNotes: [],
+          omittedReleaseCount: 0,
           errorContext: "check",
           canRetry: true,
           checkedAt,
@@ -469,7 +472,7 @@ export const make = Effect.gen(function* () {
     );
 
   const customSyncPoller: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
-    const config = yield* readCustomSyncConfig(environment.stateDir).pipe(
+    const config = yield* readCustomSyncConfig(environment.stateDir, environment.appRoot).pipe(
       Effect.provide(NodeServices.layer),
     );
     if (Option.isNone(config)) return;

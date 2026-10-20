@@ -101,6 +101,8 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
   if (state.customSync) {
+    if (state.status === "error") return state.message ?? "Could not check upstream changes";
+    if (state.status === "checking") return "Checking upstream changes";
     const behind = state.syncBehind ?? 0;
     if (behind > 0) {
       return `Upstream is ${behind} commit${behind === 1 ? "" : "s"} ahead of this build`;

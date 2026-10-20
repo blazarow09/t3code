@@ -8,9 +8,8 @@ import * as Schema from "effect/Schema";
 /**
  * Custom fork support. A branded build ships no update feed, so the stock updater
  * can never tell the user that upstream has moved. Instead the packaging tooling
- * (`t3code-custom-sync`, `-Phase build`) drops a small `custom-sync.json` into
- * the state directory naming the checkout this build came from, and the app asks
- * that checkout directly.
+ * embeds `custom-sync.json` in the installer, naming its checkout and revision.
+ * Legacy installs can still read the checkout from the state directory.
  *
  * Stock builds have no such file, which disables the whole path.
  */
@@ -68,6 +67,14 @@ const CustomSyncConfigSchema = Schema.Struct({
   upstreamRef: Schema.optionalKey(Schema.String),
 });
 
+const decodePackagedRevision = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      t3codeCommitHash: Schema.optionalKey(Schema.String),
+    }),
+  ),
+);
+
 const DEFAULT_CUSTOM_SYNC_BRANCH = "custom";
 const DEFAULT_CUSTOM_SYNC_WORKING_BRANCH = "custom-sync";
 
@@ -84,15 +91,11 @@ function blankToNull(value: string | undefined): string | null {
  * tip, so counting `branch..upstream` reports commits the build already has.
  */
 export function selectCustomSyncBase(input: {
-  readonly branch: string;
-  readonly syncBranch: string;
   readonly builtRevision: string | null;
   readonly builtRevisionResolves: boolean;
-  readonly syncBranchResolves: boolean;
-}): string {
-  if (input.builtRevision !== null && input.builtRevisionResolves) return input.builtRevision;
-  if (input.syncBranchResolves) return input.syncBranch;
-  return input.branch;
+}): string | null {
+  if (input.builtRevision !== null) return input.builtRevisionResolves ? input.builtRevision : null;
+  return null;
 }
 
 const decodeCustomSyncDocument = Schema.decodeUnknownOption(
@@ -106,31 +109,37 @@ const decodeCustomSyncDocument = Schema.decodeUnknownOption(
  */
 export const readCustomSyncConfig = Effect.fn("desktop.customSync.readConfig")(function* (
   stateDir: string,
+  appRoot?: string,
 ) {
-  const envRepoPath = process.env["T3CODE_CUSTOM_SYNC_REPO"]?.trim();
-  if (envRepoPath) {
-    return Option.some<CustomSyncConfig>({
-      repoPath: envRepoPath,
-      branch: DEFAULT_CUSTOM_SYNC_BRANCH,
-      syncBranch: DEFAULT_CUSTOM_SYNC_WORKING_BRANCH,
-      builtRevision: null,
-      upstreamRef: "upstream/main",
-    });
-  }
-
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const contents = yield* fs
-    .readFileString(path.join(stateDir, CUSTOM_SYNC_CONFIG_FILE))
-    .pipe(Effect.orElseSucceed(() => ""));
-
-  return Option.map(decodeCustomSyncDocument(contents), (config) => ({
-    repoPath: config.repoPath,
-    branch: config.branch?.trim() || DEFAULT_CUSTOM_SYNC_BRANCH,
-    syncBranch: config.syncBranch?.trim() || DEFAULT_CUSTOM_SYNC_WORKING_BRANCH,
-    builtRevision: blankToNull(config.builtRevision),
-    upstreamRef: config.upstreamRef?.trim() || "upstream/main",
-  }));
+  const readConfig = (directory: string) =>
+    fs.readFileString(path.join(directory, CUSTOM_SYNC_CONFIG_FILE)).pipe(
+      Effect.orElseSucceed(() => ""),
+      Effect.map(decodeCustomSyncDocument),
+    );
+  // The installed artifact owns its baseline; building another installer must not change it.
+  const embedded = appRoot === undefined ? Option.none() : yield* readConfig(appRoot);
+  const document = Option.isSome(embedded) ? embedded : yield* readConfig(stateDir);
+  const envRepoPath = process.env["T3CODE_CUSTOM_SYNC_REPO"]?.trim();
+  if (Option.isNone(document) && !envRepoPath) return Option.none<CustomSyncConfig>();
+  const config = Option.getOrUndefined(document);
+  let builtRevision = blankToNull(config?.builtRevision);
+  if (Option.isNone(embedded) && appRoot !== undefined) {
+    const metadata = yield* fs.readFileString(path.join(appRoot, "package.json")).pipe(
+      Effect.orElseSucceed(() => ""),
+      Effect.map(decodePackagedRevision),
+    );
+    if (Option.isSome(metadata))
+      builtRevision = blankToNull(metadata.value.t3codeCommitHash) ?? builtRevision;
+  }
+  return Option.some<CustomSyncConfig>({
+    repoPath: envRepoPath || config?.repoPath || "",
+    branch: config?.branch?.trim() || DEFAULT_CUSTOM_SYNC_BRANCH,
+    syncBranch: config?.syncBranch?.trim() || DEFAULT_CUSTOM_SYNC_WORKING_BRANCH,
+    builtRevision,
+    upstreamRef: config?.upstreamRef?.trim() || "upstream/main",
+  });
 });
 
 /**
@@ -158,12 +167,10 @@ export const probeCustomSync = Effect.fn("desktop.customSync.probe")(function* (
       Effect.orElseSucceed(() => false),
     );
   const base = selectCustomSyncBase({
-    branch: config.branch,
-    syncBranch: config.syncBranch,
     builtRevision: config.builtRevision,
     builtRevisionResolves: config.builtRevision !== null && (yield* resolves(config.builtRevision)),
-    syncBranchResolves: yield* resolves(config.syncBranch),
   });
+  if (base === null) return Option.none<CustomSyncProbe>();
   const range = `${base}..${config.upstreamRef}`;
   const counted = yield* git(["rev-list", "--count", range]);
   const behind = Number.parseInt(counted.trim(), 10);

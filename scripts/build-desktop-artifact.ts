@@ -859,7 +859,7 @@ const spawnAndCollectOutput = Effect.fn("spawnAndCollectOutput")(function* (
 
 const resolveGitCommitHash = Effect.fn("resolveGitCommitHash")(function* (repoRoot: string) {
   const result = yield* spawnAndCollectOutput(
-    ChildProcess.make("git", ["rev-parse", "--short=12", "HEAD"], {
+    ChildProcess.make("git", ["rev-parse", "--verify", "HEAD"], {
       cwd: repoRoot,
     }),
   ).pipe(
@@ -2732,6 +2732,13 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   };
 });
 
+export function customDesktopVersion(upstreamVersion: string, now: Date): string {
+  const stamp = now.toISOString().replace(/[-:TZ.]/g, "");
+  const [base, metadata] = upstreamVersion.split("+", 2);
+  const separator = base!.includes("-") ? "." : "-";
+  return `${base}${separator}custom.${stamp.slice(0, 8)}.${Number(stamp.slice(8))}${metadata ? `+${metadata}` : ""}`;
+}
+
 export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
@@ -3665,8 +3672,12 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       }),
   });
 
-  const appVersion = options.version ?? serverPackageJson.version;
-  const iconAssets = resolveDesktopBuildIconAssets(appVersion);
+  const upstreamVersion = options.version ?? serverPackageJson.version;
+  const isCustomBuild = options.appId === "com.t3tools.t3code.custom";
+  const appVersion = isCustomBuild
+    ? customDesktopVersion(upstreamVersion, new Date())
+    : upstreamVersion;
+  const iconAssets = resolveDesktopBuildIconAssets(upstreamVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
@@ -3753,7 +3764,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     });
   }
 
-  const webAssetBrand = resolveDesktopWebAssetBrand(appVersion);
+  const webAssetBrand = resolveDesktopWebAssetBrand(upstreamVersion);
   yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client");
   yield* Effect.log(`[desktop-artifact] Applied ${webAssetBrand} web client branding.`);
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
@@ -3779,7 +3790,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   if (options.platform === "mac" && options.target === "dmg") {
     yield* stageDesktopDmgBackground(
       stageResourcesDir,
-      resolveDesktopUpdateChannel(appVersion),
+      resolveDesktopUpdateChannel(upstreamVersion),
       options.verbose,
     );
   }
@@ -3884,10 +3895,22 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     options.platform === "win"
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
+  if (isCustomBuild) {
+    yield* fs.writeFileString(
+      path.join(stageAppDir, "custom-sync.json"),
+      JSON.stringify({
+        repoPath: repoRoot,
+        branch: "custom",
+        syncBranch: "custom-sync",
+        upstreamRef: "upstream/main",
+        builtRevision: commitHash,
+      }),
+    );
+  }
   const stagePackageJson: StagePackageJson = {
     name: "t3code",
     version: appVersion,
-    buildVersion: appVersion,
+    buildVersion: isCustomBuild ? upstreamVersion.split(/[+-]/)[0]! : appVersion,
     t3codeCommitHash: commitHash,
     // Read by apps/desktop/src/preview/Passkeys.ts; must match the signed entitlements.
     ...(macWebAuthn ? { t3codeWebAuthn: macWebAuthn } : {}),

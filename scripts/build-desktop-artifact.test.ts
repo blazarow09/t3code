@@ -23,6 +23,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   buildDesktopBundles,
   DesktopBuildManifestRestoreError,
+  customDesktopVersion,
   BundleNotSelfContainedError,
   BuildCommandFailedError,
   parseWslRuntimeArchiveMembers,
@@ -1844,3 +1845,21 @@ it.effect.skipIf(!symlinksSupported)("rebases packaged links into the isolated t
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it("ignores trailing separators", () => {
+  assert.deepStrictEqual(
+    ancestorNodeModulesPaths("C:\\tmp\\probe\\app\\", "\\"),
+    ancestorNodeModulesPaths("C:\\tmp\\probe\\app", "\\"),
+  );
+});
+
+it("versions custom installers independently while preserving the upstream version", () => {
+  const first = customDesktopVersion("0.1.0", new Date("2026-10-20T00:01:02.003Z"));
+  const next = customDesktopVersion("0.1.0", new Date("2026-10-20T00:01:02.004Z"));
+  assert.equal(first, "0.1.0-custom.20261020.102003");
+  assert.notEqual(first, next);
+  assert.equal(
+    customDesktopVersion("0.2.0-nightly.20261020.1+abc", new Date("2026-10-20T12:00:00.000Z")),
+    "0.2.0-nightly.20261020.1.custom.20261020.120000000+abc",
+  );
+});

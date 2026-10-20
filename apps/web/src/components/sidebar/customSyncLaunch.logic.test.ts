@@ -47,14 +47,14 @@ describe("selectCustomSyncProvider", () => {
     driver: "codex",
     enabled: true,
     installed: true,
-    models: [] as Array<{ slug: string }>,
+    models: [{ slug: "gpt-6-astra" }, { slug: "gpt-6-sol" }] as Array<{ slug: string }>,
   };
 
-  it("selects Codex only when GPT-6 Sol is available", () => {
+  it("selects Codex only when GPT-6.1 Sol is available", () => {
     const listed = {
       ...codex,
       instanceId: "codex-sol",
-      models: [{ slug: CUSTOM_SYNC_MODEL_SLUG }],
+      models: [{ slug: "gpt-6.1-sol" }],
     };
     expect(selectCustomSyncProvider([otherProvider, codex, listed])?.instanceId).toBe("codex-sol");
   });
