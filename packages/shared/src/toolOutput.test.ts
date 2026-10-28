@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  omitToolOutputImageData,
   compactDynamicToolOutput,
   MAX_TOOL_OUTPUT_IMAGES,
   toolOutputImages,

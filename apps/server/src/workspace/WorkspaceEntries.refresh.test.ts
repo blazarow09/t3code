@@ -55,6 +55,7 @@ it.effect("coalesces overlapping refreshes and waits for changes made during the
         resolveRelativePathWithinRoot: () => Effect.die("not used"),
       }),
       Effect.provideService(EverythingSearch.EverythingSearch, {
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Undefined selects the native search fallback.
         search: () => Effect.succeed(undefined),
       }),
       Effect.provideService(VcsProcess.VcsProcess, { run: () => Effect.die("not used") }),

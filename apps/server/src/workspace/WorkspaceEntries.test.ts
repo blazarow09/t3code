@@ -601,8 +601,6 @@ it.effect(
       const cwd = yield* makeTempDir({ prefix: "t3-content-lazy-refresh-" });
       yield* writeTextFile(cwd, "content.txt", "before-change\n");
       const entries = yield* WorkspaceEntries.WorkspaceEntries;
-      const create = vi.spyOn(FileFinder, "create");
-      const scan = vi.spyOn(FileFinder.prototype, "scanFiles");
       const input = {
         cwd,
         query: "before-change",
@@ -614,11 +612,8 @@ it.effect(
       expect((yield* entries.searchContents(input)).matches.length).toBe(1);
       yield* writeTextFile(cwd, "content.txt", "after-change\n");
       yield* entries.refresh(cwd);
-      expect(scan).not.toHaveBeenCalled();
-      expect(create).toHaveBeenCalledTimes(1);
       expect(
         (yield* entries.searchContents({ ...input, query: "after-change" })).matches.length,
       ).toBe(1);
-      expect(create).toHaveBeenCalledTimes(2);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );

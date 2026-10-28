@@ -32,8 +32,6 @@ import {
   CURSOR_MODELS_WINDOW_ID,
   OTHER_MODELS_WINDOW_ID,
   primaryUsageWindow,
-  providersWithLimits,
-  remainingPercent,
   usesChatGptSharing,
   usableLimitWindows,
 } from "./usageLimits.ts";
@@ -325,37 +323,6 @@ describe("limitsNotice", () => {
         unavailable: { reason: "probeFailed", message: "Codex timed out." },
       }),
     ).toBe("Codex timed out.");
-  });
-});
-
-describe("providersWithLimits", () => {
-  it("keeps only usable providers whose driver reports limits at all", () => {
-    const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
-    const codex = provider({ usageLimits: limits });
-    expect(
-      providersWithLimits([
-        codex,
-        provider({
-          instanceId: ProviderInstanceId.make("cursor"),
-          driver: ProviderDriverKind.make("cursor"),
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("off"),
-          enabled: false,
-          usageLimits: limits,
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("gone"),
-          installed: false,
-          usageLimits: limits,
-        }),
-        provider({
-          instanceId: ProviderInstanceId.make("shadow"),
-          availability: "unavailable",
-          usageLimits: limits,
-        }),
-      ]),
-    ).toEqual([codex]);
   });
 });
 

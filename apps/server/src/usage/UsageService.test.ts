@@ -1,3 +1,4 @@
+import * as PromptSuggestionUsage from "./PromptSuggestionUsage.ts";
 // @effect-diagnostics nodeBuiltinImport:off - the suite seeds and grows real
 // transcript trees on disk, outside the service's Effect FileSystem.
 import * as NodeChildProcess from "node:child_process";

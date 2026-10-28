@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  buildBrowseGroups,
   buildNestedSearchItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,

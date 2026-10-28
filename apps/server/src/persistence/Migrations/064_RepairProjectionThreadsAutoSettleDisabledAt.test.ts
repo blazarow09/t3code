@@ -27,6 +27,12 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
             { migration_id: 67, name: "CanonicalizeThreadPullRequestLinks" },
             { migration_id: 68, name: "CodexUsageNativeTurnIndex" },
             { migration_id: 69, name: "RepairClientSettlementTimestamps" },
+            { migration_id: 70, name: "WebhookDedupe" },
+            { migration_id: 71, name: "ShellStopRequestIndex" },
+            { migration_id: 72, name: "ThreadMessageSearch" },
+            { migration_id: 73, name: "PeerLinks" },
+            { migration_id: 74, name: "PeerLinkFence" },
+            { migration_id: 75, name: "WaitingLinkRequestIndex" },
           ],
         );
         assert.deepEqual(
@@ -105,6 +111,12 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
             { migration_id: 67, name: "CanonicalizeThreadPullRequestLinks" },
             { migration_id: 68, name: "CodexUsageNativeTurnIndex" },
             { migration_id: 69, name: "RepairClientSettlementTimestamps" },
+            { migration_id: 70, name: "WebhookDedupe" },
+            { migration_id: 71, name: "ShellStopRequestIndex" },
+            { migration_id: 72, name: "ThreadMessageSearch" },
+            { migration_id: 73, name: "PeerLinks" },
+            { migration_id: 74, name: "PeerLinkFence" },
+            { migration_id: 75, name: "WaitingLinkRequestIndex" },
           ],
         );
         assert.deepEqual(yield* runMigrations(), []);

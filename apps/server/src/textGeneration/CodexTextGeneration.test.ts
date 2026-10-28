@@ -1,3 +1,4 @@
+import * as Result from "effect/Result";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Cause from "effect/Cause";

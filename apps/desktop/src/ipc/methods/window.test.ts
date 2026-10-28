@@ -26,13 +26,10 @@ import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import type { DesktopSettings } from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import {
   getLocalEnvironmentBootstraps,
   getRelayTelemetryEnabled,
-  getWindowFullscreenState,
-  pasteAsText,
   pickFolder,
   pickProjectFavicon,
   probeRemoteEditors,
@@ -280,7 +277,7 @@ describe("pickFolder", () => {
   it.effect("picks a single workspace file when asked for one", () =>
     Effect.gen(function* () {
       const pickFiles = vi.fn(() => Effect.succeed(["/srv/scripts.code-workspace"]));
-      const pickFolderDialog = vi.fn(() => Effect.succeed(Option.some("/srv")));
+      const pickFolderDialog = vi.fn(() => Effect.succeedSome("/srv"));
       const result = yield* pickFolder
         .handler({ initialPath: "/srv", codeWorkspaceFile: true })
         .pipe(
@@ -291,7 +288,7 @@ describe("pickFolder", () => {
                 pickFolder: pickFolderDialog,
               }),
               Layer.mock(ElectronWindow.ElectronWindow)({
-                focusedMainOrFirst: Effect.succeed(Option.none()),
+                focusedMainOrFirst: Effect.succeedNone,
               }),
               DesktopEnvironment.layer({
                 dirname: "/app/dist-electron",

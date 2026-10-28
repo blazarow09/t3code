@@ -18,7 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
-import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Schema from "effect/Schema";
@@ -122,12 +121,10 @@ const makeHarness = Effect.gen(function* () {
           if (interrupted) return yield* Effect.interrupt;
           if (blocked) yield* Deferred.await(finish);
           if (failure)
-            return yield* Effect.fail(
-              new TextGenerationError({
-                operation: "generatePromptSuggestion",
-                detail: "rate limited",
-              }),
-            );
+            return yield* new TextGenerationError({
+              operation: "generatePromptSuggestion",
+              detail: "rate limited",
+            });
           return expected;
         }),
     },
@@ -142,11 +139,9 @@ const makeHarness = Effect.gen(function* () {
         Layer.mock(ThreadManagementService)({ getThreadShell: () => Effect.sync(() => thread) }),
         Layer.mock(ProjectStoreV2)({
           get: () =>
-            Effect.succeed(
-              Option.some({
-                workspaceRoot: "/work",
-              } as import("./orchestration-v2/ProjectStore.ts").ProjectRow),
-            ),
+            Effect.succeedSome({
+              workspaceRoot: "/work",
+            } as import("./orchestration-v2/ProjectStore.ts").ProjectRow),
         }),
         Layer.mock(ProviderInstanceRegistry)({
           getInstance: (id) => Effect.succeed(id === instanceId ? instance : undefined),
