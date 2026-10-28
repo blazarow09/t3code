@@ -26,6 +26,7 @@ import {
   makeModelDisabledReason,
 } from "../ChatView.logic";
 interface ComposerSelectionInput {
+  readonly onProviderInstanceSelected?: (instanceId: ProviderInstanceId) => void;
   readonly environmentId: EnvironmentId;
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly draftThread: DraftSessionState | null;
@@ -210,6 +211,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       nextModelSelection,
       { explicit: true, replaceOptions: true },
     );
+    input.onProviderInstanceSelected?.(instanceId);
     setStickyComposerModelSelection(nextModelSelection);
     if (options?.focusComposer !== false) scheduleComposerFocus();
   };

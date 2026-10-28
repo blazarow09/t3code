@@ -238,7 +238,7 @@ export const make = Effect.gen(function* () {
           const resolved = yield* fs.realPath(path.join(cwd, directory)).pipe(
             Effect.catchIf(
               (error) => error.reason._tag === "NotFound",
-              () => Effect.succeed(undefined),
+              () => Effect.void,
             ),
           );
           known =
@@ -309,13 +309,12 @@ export const make = Effect.gen(function* () {
     const readRule = Effect.fnUntraced(function* (directory: string) {
       if (rules.has(directory)) return rules.get(directory);
       const filename = path.join(directory, ".ignore");
-      const info = yield* fs
-        .stat(filename)
-        .pipe(
-          Effect.catch((error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
-          ),
-        );
+      const info = yield* fs.stat(filename).pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.void,
+        ),
+      );
       if (info && (info.type !== "File" || Number(info.size) > MAX_IGNORE_BYTES)) {
         return yield* new EverythingUnavailable({ reason: "ignore-rules" });
       }
@@ -485,15 +484,14 @@ export const make = Effect.gen(function* () {
               Effect.fail(new EverythingUnavailable({ reason: "timeout", cause })),
           }),
           Effect.catchTags({
-            EverythingUnavailable: (error) =>
-              Effect.gen(function* () {
-                retryAfter = (yield* Clock.currentTimeMillis) + RETRY_DELAY_MS;
-                yield* Effect.logDebug("Everything unavailable; using native workspace search", {
-                  reason: error.reason,
-                  exitCode: error.exitCode,
-                });
-                return undefined;
-              }),
+            EverythingUnavailable: Effect.fn("EverythingUnavailable")(function* (error) {
+              retryAfter = (yield* Clock.currentTimeMillis) + RETRY_DELAY_MS;
+              yield* Effect.logDebug("Everything unavailable; using native workspace search", {
+                reason: error.reason,
+                exitCode: error.exitCode,
+              });
+              return undefined;
+            }),
           }),
         ),
       );

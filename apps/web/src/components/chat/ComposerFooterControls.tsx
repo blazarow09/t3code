@@ -14,7 +14,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
+import {
+  ContextWindowMeter,
+  ContextWindowMeterPlaceholder,
+  type ComposerLeftoverUsage,
+} from "./ContextWindowMeter";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { runtimeModeConfig } from "./runtimeModeConfig";
@@ -141,6 +145,9 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
+  leftoverUsage: ComposerLeftoverUsage | null;
+  selectedModel: string | null;
+  showUsageMeter: boolean;
   reserveContextWindowMeter: boolean;
   activeThreadModelDisplayName: string | null;
   isPreparingWorktree: boolean;
@@ -179,8 +186,10 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
 }) {
   return (
     <>
-      {props.activeContextWindow ? (
+      {props.showUsageMeter && (props.activeContextWindow || props.leftoverUsage) ? (
         <ContextWindowMeter
+          leftover={props.leftoverUsage}
+          leftoverModelHint={[props.selectedModel, props.activeThreadModelDisplayName]}
           usage={props.activeContextWindow}
           modelDisplayName={props.activeThreadModelDisplayName}
           onCompact={props.onCompactContext}

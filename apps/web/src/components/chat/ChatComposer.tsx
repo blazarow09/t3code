@@ -31,6 +31,7 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ServerProviderSkill,
+  UsageLimitSourceSnapshots,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -758,7 +759,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pendingApprovals.length > 0 ||
         pendingUserInputs.length > 0 ||
         isSendBusy ||
-        isConnecting ||
+        props.phase === "disconnected" ||
         isRevertingCheckpoint ||
         props.sendDisabledReason !== null,
     }),
@@ -2311,8 +2312,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
 
-  const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
-    composerCommandKeyHandler({
+  const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) => {
+    if (
+      key === "Tab" &&
+      !event.shiftKey &&
+      !event.isComposing &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      promptSuggestion &&
+      promptRef.current.length === 0 &&
+      !composerMenuOpenRef.current &&
+      !isComposerModelPickerOpen &&
+      !isStashMenuOpen
+    ) {
+      dismissPromptSuggestion();
+      applyPromptReplacement(0, 0, promptSuggestion, { expectedText: "" });
+      return true;
+    }
+    return composerCommandKeyHandler({
       keybindings,
       sendShortcut: settings.sendShortcut,
       routeKind,
@@ -2349,6 +2367,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       applyPromptReplacement,
       submitComposer,
     })(key, event, isTaskItem);
+  };
 
   const {
     stashQueue,
@@ -2388,7 +2407,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     expandMobileComposer: expandMobileComposerStable,
   });
   const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
-  const updateClientSettings = useUpdateClientSettings();
   const pinnedSkillNames = new Set(settings.pinnedSkills);
   const pinnedSkills = selectedProviderSkills.filter((skill) => pinnedSkillNames.has(skill.name));
   const toggleSkillPin = (skill: ServerProviderSkill) => {
@@ -3578,7 +3596,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPinnedSkills
               skills={pinnedSkills}
               disabled={
-                isConnecting ||
+                props.phase === "disconnected" ||
                 projectSelectionRequired ||
                 isChoiceOnlyPendingQuestion ||
                 activePendingIsResponding

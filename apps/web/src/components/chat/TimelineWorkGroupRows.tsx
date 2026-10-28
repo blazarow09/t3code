@@ -1,3 +1,6 @@
+import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
+import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
+import { WorkLogDetails } from "./WorkLog";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogButton, WorkLogList, WorkLogRow } from "./WorkLog";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
@@ -585,17 +588,48 @@ export function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const threadRef = ctx.threadRef;
+  const images =
+    !row.expanded && threadRef
+      ? [...new Set(row.viewedImagePaths ?? [])].flatMap((path) => {
+          const image = resolveViewedImageAsset(path, {
+            threadId: threadRef.threadId,
+            workspaceRoot: ctx.workspaceRoot,
+          });
+          return image ? [{ path, image }] : [];
+        })
+      : [];
   return (
-    <WorkGroupHeader
-      label={row.summary}
-      iconName={row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
-      toolIcon={row.toolIcon}
-      failed={row.hasFailure}
-      expanded={row.expanded}
-      createdAt={row.createdAt}
-      timestampFormat={ctx.timestampFormat}
-      onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-    />
+    <>
+      <WorkGroupHeader
+        label={row.summary}
+        iconName={row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
+        toolIcon={row.toolIcon}
+        failed={row.hasFailure}
+        expanded={row.expanded}
+        createdAt={row.createdAt}
+        timestampFormat={ctx.timestampFormat}
+        onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      />
+      {images.length > 0 && threadRef ? (
+        <WorkLogDetails kind="media">
+          <div className="flex flex-wrap gap-2">
+            {images.map(({ path, image }) => (
+              <ChatMarkdownAssetImage
+                key={path}
+                environmentId={threadRef.environmentId}
+                resource={image.resource}
+                alt={image.alt}
+                srcFragment={image.srcFragment}
+                workspaceRoot={ctx.workspaceRoot}
+                maxHeightRem={10}
+                onImageExpand={ctx.onImageExpand}
+              />
+            ))}
+          </div>
+        </WorkLogDetails>
+      ) : null}
+    </>
   );
 }
 

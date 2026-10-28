@@ -176,18 +176,21 @@ const make = Effect.gen(function* () {
   });
 
   return PromptSuggestionUsage.of({
-    claim: (input) =>
+    claim: Effect.fn("PromptSuggestionUsage.claim")((input) =>
       claim(input).pipe(
         Effect.mapError((cause) => new PromptSuggestionUsageError({ operation: "claim", cause })),
       ),
-    finish: (input) =>
+    ),
+    finish: Effect.fn("PromptSuggestionUsage.finish")((input) =>
       finish(input).pipe(
         Effect.mapError((cause) => new PromptSuggestionUsageError({ operation: "finish", cause })),
       ),
-    readSummary: (input) =>
+    ),
+    readSummary: Effect.fn("PromptSuggestionUsage.readSummary")((input) =>
       readSummary(input).pipe(
         Effect.mapError((cause) => new PromptSuggestionUsageError({ operation: "read", cause })),
       ),
+    ),
   });
 });
 

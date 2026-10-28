@@ -534,10 +534,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
         ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
-        : platform === "win32"
-          ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(input.cwd)]
-          : [input.cwd],
+        : [input.cwd],
   };
 });
 
@@ -548,16 +545,7 @@ function buildFileManagerRevealPowerShellSource(target: string, parent: string):
   return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { ${buildFileExplorerRevealPowerShellSource(target)} }`;
 }
 
-/**
- * PowerShell source that selects `target` in File Explorer.
- *
- * The path stays inside a PowerShell string, so spaces, apostrophes, and `[` are
- * literal — Explorer's `/select` switch misparses those when Node quotes the
- * argument.
- *
- * Exported so the Windows smoke test can drive the identical source through a
- * real PowerShell.
- */
+/** Keep paths literal: Explorer misparses Node-quoted /select arguments. */
 export function buildFileExplorerRevealPowerShellSource(target: string): string {
   const literal = escapePowerShellStringLiteral(target);
   return `$ErrorActionPreference = 'Stop'
@@ -594,13 +582,7 @@ try {
 `;
 }
 
-/**
- * Run shell activation without a console or a hidden GUI startup state.
- * Node's windowsHide sets STARTF_USESHOWWINDOW/SW_HIDE, which the shell can
- * propagate to Explorer even when SHOpenFolderAndSelectItems returns S_OK.
- * ProcessStartInfo.CreateNoWindow suppresses only the helper's console; its
- * default Normal WindowStyle leaves STARTF_USESHOWWINDOW unset.
- */
+/** Avoid windowsHide: its hidden startup state can propagate to Explorer. */
 export function buildFileExplorerHelperPowerShellSource(source: string): string {
   return `$ErrorActionPreference = 'Stop'
 $startInfo = New-Object System.Diagnostics.ProcessStartInfo

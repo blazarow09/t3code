@@ -61,6 +61,7 @@ export function useComposerProviderModel(
   );
   const selection = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
+    overrideInstanceId: input.overrideInstanceId ?? null,
     candidateInstanceIds,
     lockedProvider,
     lockedInstanceId,

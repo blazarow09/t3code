@@ -2,20 +2,8 @@ import { observeResize } from "~/lib/observeResize";
 import { enrichSubagentFromProjection, summarizeKnownAgentUsage } from "./AgentsPanel.logic";
 import { useEnvironmentThread } from "~/state/threads";
 import * as Option from "effect/Option";
-import { useMemo } from "react";
-/**
- * Agents right-panel surface: the fleet view over the native subagent fold.
- * The chat carries one expandable row per spawn batch and links here.
- *
- * Visualization rules (from live-test feedback):
- * - Spawn order is stable. Activity and completion update rows in place.
- * - Agent rows reserve three fixed lines for identity, activity, and metrics;
- *   changing data must never change their height. Non-workflow rows expand in
- *   place: the three-line row stays put and read-only detail renders below it.
- * - Workflow expansion is presentation state. A live run stays expanded when
- *   it settles; older collapsed runs can still be opened at run granularity.
- * - Static status dots, DOM-write elapsed timers, plain token counters.
- */
+import { useStableCallback } from "../hooks/useStableCallback";
+/** Keep row identities and collapsed heights stable as streamed activity changes. */
 import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentPanelModel,
@@ -33,7 +21,6 @@ import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presen
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import {
   createContext,
-  useCallback,
   use,
   useEffect,
   useLayoutEffect,
@@ -42,7 +29,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { ChatMarkdownAssetImage } from "~/components/ChatMarkdown";
+import { ChatMarkdownAssetImage } from "~/components/chat/ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
 import type { AgentToolActivityEntry } from "~/session-logic";
 import { cn } from "~/lib/utils";
@@ -70,7 +57,7 @@ const STATUS_VISUALS: Record<RuntimeSubagent["status"], { dotClass: string; labe
   running: { dotClass: "bg-info", label: "Working" },
   waiting: { dotClass: "bg-info", label: "Working" },
   // Idle reads as settled (muted, not sky): a resting Codex child looks done
-  // unless resumed — live-test: sky idle dots read as stuck in-progress.
+  // unless resumed - live-test: sky idle dots read as stuck in-progress.
   idle: { dotClass: "bg-muted-foreground/50", label: "Idle · resumable" },
   completed: { dotClass: "bg-success", label: "Completed" },
   failed: { dotClass: "bg-destructive", label: "Failed" },
@@ -118,6 +105,7 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- updates the elapsed-time DOM text while the agent is live
   useEffect(() => {
     if (!live || !startedAt) {
       return;
@@ -229,8 +217,8 @@ function ActivityTimeline({
     <div className="mt-2">
       <DetailSectionHeading>{heading}</DetailSectionHeading>
       <ol className="mt-1 space-y-0.5">
-        {entries.map((entry, index) => (
-          <li key={`${entry.at}-${index}`} className="flex gap-2 text-xs">
+        {entries.map((entry) => (
+          <li key={`${entry.at}-${entry.label}`} className="flex gap-2 text-xs">
             <span className="shrink-0 font-mono text-3xs tabular-nums text-muted-foreground/60">
               {formatActivityTime(entry.at)}
             </span>
@@ -348,10 +336,8 @@ function ChildAgentDetail({
   // output current and releases the subscription when the row closes.
   const state = useEnvironmentThread(childThreadId ? media.environmentId : null, childThreadId);
   const projection = Option.getOrNull(state.data);
-  const enriched = useMemo(() => {
-    if (!projection) return agent;
-    return enrichSubagentFromProjection(agent, projection);
-  }, [agent, projection]);
+  const enriched = projection ? enrichSubagentFromProjection(agent, projection) : agent;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports usage arriving on the external child-thread stream to the panel aggregate
   useEffect(() => {
     if (projection) {
       onLoaded?.(enriched);
@@ -395,7 +381,7 @@ function AgentDetail({
       ]
         .filter((value): value is string => value !== null)
         .join(" · ")
-    : "—";
+    : "-";
   const runHandles = agent.runHandles;
   const hasHandles = runHandles !== null || agent.outputFile !== null;
   const hasToolHistory = toolActivity !== undefined && toolActivity.length > 0;
@@ -411,12 +397,12 @@ function AgentDetail({
     <div className="mb-1 ml-2 mr-1.5 mt-0.5 rounded-md border border-border/60 bg-background/60 p-2">
       <div className="flex flex-col gap-0.5">
         <DetailRow label="Status" value={agentStatusLabel(agent)} />
-        <DetailRow label="Model" value={modelLabel ?? "—"} />
+        <DetailRow label="Model" value={modelLabel ?? "-"} />
         <DetailRow label="Runs" value={String(agent.activationCount)} />
         <DetailRow label="Tokens" value={tokenBreakdown} mono />
         <DetailRow
           label="Tool uses"
-          value={usage?.toolUses !== undefined ? String(usage.toolUses) : "—"}
+          value={usage?.toolUses !== undefined ? String(usage.toolUses) : "-"}
         />
         <DetailRow
           label="Duration"
@@ -426,7 +412,7 @@ function AgentDetail({
             ) : agent.startedAt ? (
               <AgentElapsed agent={agent} />
             ) : (
-              "—"
+              "-"
             )
           }
         />
@@ -509,7 +495,7 @@ function AgentRow({
       : agent.role;
   const metadata = [
     modelLabel,
-    usage ? `${formatSubagentTokenCount(usage.totalTokens)} tok` : "— tok",
+    usage ? `${formatSubagentTokenCount(usage.totalTokens)} tok` : "- tok",
     usage?.toolUses !== undefined ? `${usage.toolUses} tools` : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
@@ -716,14 +702,11 @@ function PhaseSection({
   agentToolActivity?: AgentToolActivityByAgent | undefined;
 }) {
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
-  const previousState = useRef(phase.state);
-
-  useEffect(() => {
-    if (previousState.current !== "running" && phase.state === "running") {
-      setOpen(true);
-    }
-    previousState.current = phase.state;
-  }, [phase.state]);
+  const [previousState, setPreviousState] = useState(phase.state);
+  if (previousState !== phase.state) {
+    setPreviousState(phase.state);
+    if (phase.state === "running") setOpen(true);
+  }
 
   return (
     <div>
@@ -950,7 +933,7 @@ export function AgentsPanel({
   visible?: boolean;
 }) {
   const [loadedUsage, setLoadedUsage] = useState<Readonly<Record<string, SubagentUsage>>>({});
-  const reportUsage = useCallback((agent: RuntimeSubagent) => {
+  const reportUsage = useStableCallback((agent: RuntimeSubagent) => {
     const usage = agent.usage;
     if (!usage) return;
     setLoadedUsage((previous) => {
@@ -967,7 +950,7 @@ export function AgentsPanel({
         return previous;
       return { ...previous, [agent.id]: usage };
     });
-  }, []);
+  });
   const usageSummary = summarizeKnownAgentUsage(
     [
       ...model.directAgents,
@@ -981,6 +964,7 @@ export function AgentsPanel({
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const scrollContentRef = useRef<HTMLDivElement>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the scroll viewport as external agent activity grows its content
   useLayoutEffect(() => {
     if (!visible || !model.hasAgents) return;
     const root = scrollRootRef.current;

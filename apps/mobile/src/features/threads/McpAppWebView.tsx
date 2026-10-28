@@ -206,6 +206,7 @@ export function ThreadMcpApp(props: {
 
   const createImageUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const createImageUrlRef = useRef(createImageUrl);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the iframe host callback on the current asset URL command
   useEffect(() => {
     createImageUrlRef.current = createImageUrl;
   }, [createImageUrl]);
@@ -260,16 +261,50 @@ export function ThreadMcpApp(props: {
   // revision, which is a new atom, so the host follows the current one.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the MCP host to the current tool call
   useEffect(() => {
-    if (host === null) return;
-    return appAtomRegistry.subscribe(
+    if (host === null || uri === null) return;
+    let controller: AbortController | undefined;
+    const unsubscribe = appAtomRegistry.subscribe(
       detailAtom,
       (result) => {
+        controller?.abort();
         const call = AsyncResult.isSuccess(result) ? storedToolCall(result.value.item) : undefined;
-        if (call !== undefined) host.setToolCall(call);
+        if (call === undefined) return;
+        const delivery = new AbortController();
+        controller = delivery;
+        const deliver = async () => {
+          const result =
+            call.result === undefined
+              ? undefined
+              : await hydrateMcpAppToolResult(call.result, async (index) => {
+                  const signed = await createImageUrlRef.current({
+                    environmentId: props.environmentId,
+                    input: {
+                      resource: {
+                        _tag: "tool-output-image",
+                        threadId: props.threadId,
+                        itemId: props.itemId,
+                        index,
+                      },
+                    },
+                  });
+                  if (signed._tag !== "Success") throw new Error("Image unavailable");
+                  const imageUrl = resolveAssetUrl(uri, signed.value.relativeUrl);
+                  if (imageUrl === null) throw new Error("Image URL unavailable");
+                  const response = await fetch(imageUrl, { signal: delivery.signal });
+                  if (!response.ok) throw new Error("Image download failed");
+                  return new Uint8Array(await response.arrayBuffer());
+                });
+          if (!delivery.signal.aborted) host.setToolCall({ ...call, result });
+        };
+        void deliver();
       },
       { immediate: true },
     );
-  }, [host, detailAtom]);
+    return () => {
+      unsubscribe();
+      controller?.abort();
+    };
+  }, [host, detailAtom, uri, props.environmentId, props.threadId, props.itemId]);
   const userActive = useRef(false);
 
   // Each WebView document gets its own host: the view is keyed by document,

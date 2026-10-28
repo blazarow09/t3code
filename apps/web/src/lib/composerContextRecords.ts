@@ -154,10 +154,6 @@ export function previewAnnotationContextReference(
   };
 }
 
-export function threadContextReference(record: ThreadContextRecord): ComposerContextReference {
-  return { kind: "thread", contextId: record.contextId, label: record.label };
-}
-
 /** One record per machine: mentioning the same machine twice reuses the chip. */
 export function environmentContextReference(
   record: EnvironmentContextRecord,

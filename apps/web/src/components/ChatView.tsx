@@ -2708,6 +2708,8 @@ export default function ChatView(props: ChatViewProps) {
     openProviderSetupStable,
     toggleInteractionModeStable,
   } = useComposerSelection({
+    onProviderInstanceSelected: (instanceId) =>
+      setComposerOverride({ threadKey: routeThreadKey, instanceId }),
     environmentId,
     composerDraftTarget,
     draftThread,
@@ -3531,9 +3533,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               composerInstanceOverride={composerInstanceOverride}
                               promptSuggestionsBlocked={
-                                isWorking ||
-                                visibleThreadError !== null ||
-                                paintOnlyDisplayedTimeline
+                                isWorking || visibleThreadError !== null || threadDetailLoading
                               }
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeProjectId={activeProject?.id ?? null}

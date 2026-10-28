@@ -2978,26 +2978,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       : null,
                   ),
                   Effect.orElseSucceed(() => null),
-                  Effect.flatMap((response) =>
-                    response === null
-                      ? client.raw
-                          .request("thread/resume", {
-                            threadId: input.nativeThreadId,
-                            excludeTurns: true,
-                          })
-                          .pipe(
-                            Effect.catchTags({
-                              CodexAppServerRequestError: (cause) =>
-                                isThreadHistoryUnsupportedResumeError(cause)
-                                  ? client.raw.request("thread/resume", {
-                                      threadId: input.nativeThreadId,
-                                      excludeTurns: false,
-                                    })
-                                  : Effect.fail(cause),
-                            }),
-                            Effect.flatMap(decodeCodexChildModel),
-                          )
-                      : Effect.succeed(response),
+                  Effect.filterOrElse(
+                    (response) => response !== null,
+                    () =>
+                      client.raw
+                        .request("thread/resume", {
+                          threadId: input.nativeThreadId,
+                          excludeTurns: true,
+                        })
+                        .pipe(
+                          Effect.catchTags({
+                            CodexAppServerRequestError: (cause) =>
+                              isThreadHistoryUnsupportedResumeError(cause)
+                                ? client.raw.request("thread/resume", {
+                                    threadId: input.nativeThreadId,
+                                    excludeTurns: false,
+                                  })
+                                : Effect.fail(cause),
+                          }),
+                          Effect.flatMap(decodeCodexChildModel),
+                        ),
                   ),
                   Effect.timeout("5 seconds"),
                   Effect.flatMap((response) =>
@@ -6838,6 +6838,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           resumeThread: Effect.fn("CodexAdapterV2.resumeThread")(
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              const mcpSession = yield* readMcpSession(
+                threadInput.threadId ?? threadInput.providerThread.appThreadId,
+              );
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
                 excludeTurns: true,

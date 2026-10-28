@@ -389,87 +389,79 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // Custom fork: a branded build ships no update feed, so drift is measured
-  // against the checkout the installer was built from. Absent config (stock
-  // builds) disables the path. Never fails: a missing checkout or a dead
-  // network just keeps the last known state.
-  //
-  // Status stays off "available". That word is the download signal for the
-  // stock installer, which would replace this build. The commit list is the
-  // whole result.
-  const refreshCustomSync = (announce: boolean) =>
-    Effect.gen(function* () {
-      const config = yield* readCustomSyncConfig(environment.stateDir, environment.appRoot);
-      if (Option.isNone(config)) {
-        return false;
-      }
+  // Branded builds have no update feed. Keep drift status off "available",
+  // which would offer a stock installer and overwrite the custom build.
+  const refreshCustomSync = Effect.fn("desktop.updates.refreshCustomSync")(function* (
+    announce: boolean,
+  ) {
+    const config = yield* readCustomSyncConfig(environment.stateDir, environment.appRoot);
+    if (Option.isNone(config)) {
+      return false;
+    }
 
-      if (announce) {
-        const startedAt = DateTime.formatIso(yield* DateTime.now);
-        yield* updateState((state) => ({
-          ...state,
-          customSync: true,
-          enabled: true,
-          status: "checking",
-          checkedAt: startedAt,
-          message: null,
-          errorContext: null,
-          canRetry: false,
-        }));
-      }
-
-      const probe = yield* probeCustomSync(config.value).pipe(
-        Effect.orElseSucceed(() => Option.none<CustomSyncProbe>()),
-      );
-      const checkedAt = DateTime.formatIso(yield* DateTime.now);
-
-      if (Option.isNone(probe)) {
-        yield* updateState((state) => ({
-          ...state,
-          customSync: true,
-          enabled: true,
-          status: "error",
-          message: "Could not compare this installed build with upstream.",
-          syncBehind: undefined,
-          releaseNotes: [],
-          omittedReleaseCount: 0,
-          errorContext: "check",
-          canRetry: true,
-          checkedAt,
-        }));
-        return true;
-      }
-
-      const { behind, commits, upstreamTip } = probe.value;
+    if (announce) {
+      const startedAt = DateTime.formatIso(yield* DateTime.now);
       yield* updateState((state) => ({
         ...state,
         customSync: true,
         enabled: true,
-        // Not "available": that status asks the app to download a stock build.
-        status: "up-to-date",
-        syncBehind: behind,
-        availableVersion: null,
-        releaseNotes:
-          commits.length === 0
-            ? []
-            : [
-                {
-                  version: upstreamTip ?? "upstream",
-                  items: commits.map((commit) => `${commit.sha} ${commit.subject}`),
-                  totalItems: commits.length,
-                },
-              ],
-        omittedReleaseCount: Math.max(0, behind - commits.length),
+        status: "checking",
+        checkedAt: startedAt,
         message: null,
         errorContext: null,
         canRetry: false,
+      }));
+    }
+
+    const probe = yield* probeCustomSync(config.value).pipe(
+      Effect.orElseSucceed(() => Option.none<CustomSyncProbe>()),
+    );
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+
+    if (Option.isNone(probe)) {
+      yield* updateState((state) => ({
+        ...state,
+        customSync: true,
+        enabled: true,
+        status: "error",
+        message: "Could not compare this installed build with upstream.",
+        syncBehind: undefined,
+        releaseNotes: [],
+        omittedReleaseCount: 0,
+        errorContext: "check",
+        canRetry: true,
         checkedAt,
       }));
       return true;
-    }).pipe(
-      Effect.provide(NodeServices.layer),
-      Effect.withSpan("desktop.updates.refreshCustomSync"),
-    );
+    }
+
+    const { behind, commits, upstreamTip } = probe.value;
+    yield* updateState((state) => ({
+      ...state,
+      customSync: true,
+      enabled: true,
+      // Not "available": that status asks the app to download a stock build.
+      status: "up-to-date",
+      syncBehind: behind,
+      availableVersion: null,
+      releaseNotes:
+        commits.length === 0
+          ? []
+          : [
+              {
+                version: upstreamTip ?? "upstream",
+                items: commits.map((commit) => `${commit.sha} ${commit.subject}`),
+                totalItems: commits.length,
+              },
+            ],
+      omittedReleaseCount: Math.max(0, behind - commits.length),
+      message: null,
+      errorContext: null,
+      canRetry: false,
+      checkedAt,
+    }));
+    return true;
+  }, Effect.provide(NodeServices.layer));
 
   const customSyncPoller: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     const config = yield* readCustomSyncConfig(environment.stateDir, environment.appRoot).pipe(

@@ -221,7 +221,9 @@ const make = Effect.gen(function* () {
   });
 
   return PromptSuggestions.of({
-    get: (input) => get(input).pipe(Effect.orElseSucceed(() => empty)),
+    get: Effect.fn("PromptSuggestions.get")((input) =>
+      get(input).pipe(Effect.orElseSucceed(() => empty)),
+    ),
   });
 });
 

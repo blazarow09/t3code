@@ -13,9 +13,9 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
-import { inferProjectTitleFromPath } from "../../lib/projectPaths";
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import { newMessageId, newProjectId, newThreadId } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readProjects, waitForProject } from "../../state/entities";
@@ -64,7 +64,7 @@ export function useStartCustomSyncThread() {
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
 
-  const start = useCallback(async (): Promise<boolean> => {
+  const start = async (): Promise<boolean> => {
     if (inFlight.current) return false;
     inFlight.current = true;
     setPending(true);
@@ -186,7 +186,7 @@ export function useStartCustomSyncThread() {
       inFlight.current = false;
       setPending(false);
     }
-  }, [createProject, createThread, deleteThread, navigate, primaryEnvironmentId, startThreadTurn]);
+  };
 
   return { pending, start };
 }

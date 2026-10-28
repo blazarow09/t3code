@@ -32,7 +32,6 @@ import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
-import { WorkspacePageHeader } from "~/components/WorkspacePageHeader";
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
@@ -80,13 +79,7 @@ function saveBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-/**
- * An MCP App inline in the thread: the captured document in an opaque-origin
- * frame, speaking the MCP Apps bridge. Its tool calls and resource reads reach
- * its own MCP server through the environment; callable tools run automatically,
- * while chat messages and downloads ask first. Full screen keeps
- * the same frame (and the app's state) and only restyles its box.
- */
+/** Keep the same sandboxed frame mounted when moving between inline and fullscreen. */
 export function McpAppFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -158,6 +151,7 @@ export function McpAppFrame(props: {
 
   const createImageUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const createImageUrlRef = useRef(createImageUrl);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the iframe host callback on the current asset URL command
   useEffect(() => {
     createImageUrlRef.current = createImageUrl;
   }, [createImageUrl]);
@@ -453,16 +447,8 @@ export function McpAppFrame(props: {
     };
     void deliver();
     return () => controller.abort();
-  }, [
-    toolCall,
-    src,
-    documentGeneration,
-    closed,
-    props.environmentId,
-    props.threadId,
-    props.itemId,
-  ]);
-  // oxlint-enable react/exhaustive-effect-dependencies
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A reopened iframe document needs the saved tool call again.
+  }, [toolCall, src, documentGeneration, props.environmentId, props.threadId, props.itemId]);
 
   if (closed) {
     return (
@@ -473,7 +459,6 @@ export function McpAppFrame(props: {
           variant="ghost"
           onClick={() => {
             setSrc(null);
-            setMintFailed(false);
             setNavigatedAway(false);
             setDocumentGeneration((value) => value + 1);
             setClosed(false);
@@ -510,14 +495,27 @@ export function McpAppFrame(props: {
             className="flex h-10 shrink-0 items-center justify-between border-border border-b px-3 text-sm"
           >
             <span className="truncate">{app.server}</span>
-            <Button
-              aria-label="Exit full screen"
-              size="icon-sm"
-              variant="ghost"
-              onClick={() => setDisplayMode("inline")}
-            >
-              <Minimize2Icon className="size-4" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                aria-label="Exit full screen"
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => setDisplayMode("inline")}
+              >
+                <Minimize2Icon className="size-4" />
+              </Button>
+              <Button
+                aria-label="Close app"
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => {
+                  setDisplayMode("inline");
+                  setClosed(true);
+                }}
+              >
+                <XIcon className="size-4" />
+              </Button>
+            </div>
           </div>
         ) : null}
         {navigatedAway ? (

@@ -111,29 +111,4 @@ export function matchComposerEnvironmentItems(input: {
       label: environment.label,
       description: "Machine",
     }));
-  const seen = new Set(items.map((item) => item.thread.threadId));
-  const shellsById = new Map(
-    input.shells
-      .filter((shell) => shell.environmentId === input.environmentId && shell.archivedAt === null)
-      .map((shell) => [shell.id, shell]),
-  );
-  for (const match of input.contentMatches ?? []) {
-    if (
-      match.environmentId !== input.environmentId ||
-      match.threadId === input.excludeThreadId ||
-      seen.has(match.threadId)
-    )
-      continue;
-    const shell = shellsById.get(match.threadId);
-    if (!shell) continue;
-    seen.add(match.threadId);
-    items.push({
-      id: `thread:${match.environmentId}:${match.threadId}`,
-      type: "thread",
-      thread: { environmentId: match.environmentId, threadId: match.threadId },
-      label: shell.title,
-      description: match.snippet,
-    });
-  }
-  return items.slice(0, COMPOSER_THREAD_RESULT_LIMIT);
 }

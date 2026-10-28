@@ -214,7 +214,7 @@ function SidebarUpdateControl() {
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
-  const openedSummaryRequest = useRef(0);
+  const [openedSummaryRequest, setOpenedSummaryRequest] = useState(0);
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -283,13 +283,17 @@ function SidebarUpdateControl() {
   const showSummaryPopover = showReleaseNotesPopover || showCustomSyncResult;
 
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
+  if (showSummaryPopover && summaryRequest !== openedSummaryRequest) {
+    setOpenedSummaryRequest(summaryRequest);
+    setReleaseNotesOpen(true);
+  }
   const [releaseNotesTriggerFocusVisible, setReleaseNotesTriggerFocusVisible] = useState(false);
   // Release notes close when they stop applying, and open when they start
   // applying while the trigger already holds keyboard focus.
-  const [releaseNotesShownBefore, setReleaseNotesShownBefore] = useState(showReleaseNotesPopover);
-  if (releaseNotesShownBefore !== showReleaseNotesPopover) {
-    setReleaseNotesShownBefore(showReleaseNotesPopover);
-    setReleaseNotesOpen(showReleaseNotesPopover && releaseNotesTriggerFocusVisible);
+  const [releaseNotesShownBefore, setReleaseNotesShownBefore] = useState(showSummaryPopover);
+  if (releaseNotesShownBefore !== showSummaryPopover) {
+    setReleaseNotesShownBefore(showSummaryPopover);
+    setReleaseNotesOpen(showSummaryPopover && releaseNotesTriggerFocusVisible);
   }
 
   const handleAction = async () => {
@@ -517,7 +521,7 @@ function SidebarUpdateControl() {
     <SidebarMenuItem className="ml-auto shrink-0">
       <Popover
         handle={releaseNotesPopoverHandle}
-        open={releaseNotesOpen && showReleaseNotesPopover}
+        open={releaseNotesOpen && showSummaryPopover}
         triggerId={releaseNotesTriggerId}
         onOpenChange={(open, details) => {
           if (open && !showSummaryPopover) {
@@ -586,7 +590,7 @@ function SidebarUpdateControl() {
             <SidebarUpdateReleaseNotes
               onStartSync={() => {
                 void customSyncThread.start().then((started) => {
-                  if (started) releaseNotesPopoverHandle.close();
+                  if (started) setReleaseNotesOpen(false);
                 });
               }}
               shell={window.desktopBridge}
